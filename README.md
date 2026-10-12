@@ -4,6 +4,8 @@
 
 설계 흐름도: https://claude.ai/artifact/WWz5kH2FVB4jys226Ec5Aj
 
+작업 기록: `docs/ARCHIVE.md`
+
 ## 준비
 
 ```bash
