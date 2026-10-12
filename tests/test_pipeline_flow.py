@@ -81,7 +81,8 @@ async def test_full_flow_offline(tmp_path, monkeypatch):
     assert build_run["gate"]["blocks"] == 1
     assert abs(report["cost_usd"] - 0.6) < 1e-9
     assert "범위가 넓다" in (tmp_path / "lessons.md").read_text()
-    assert "fake-todo" in (run_dir / "README.md").read_text()
+    readme = (run_dir / "README.md").read_text()
+    assert "fake-todo" in readme and "export PORT=8000" in readme
 
 
 async def test_budget_stops_pipeline(tmp_path, monkeypatch):

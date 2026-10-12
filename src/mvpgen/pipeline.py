@@ -330,7 +330,8 @@ def _readme(idea: str, spec: Spec | None, stages: dict[str, Any], cost: float, s
         lines += ["", "## 요약", "", spec.summary, "", f"스택: {spec.stack}", "", "## 실행", "", "```bash", "cd app"]
         if spec.install_cmd:
             lines.append(spec.install_cmd)
-        lines += [f"PORT=8000 {spec.run_cmd}", "```", "", "테스트: `" + spec.test_cmd + "`", "", "## 기능", ""]
+        # run_cmd가 $PORT를 쓰므로 같은 줄 할당(PORT=8000 cmd)으로는 펼쳐지지 않는다. 먼저 export한다
+        lines += ["export PORT=8000", spec.run_cmd, "```", "", "테스트: `" + spec.test_cmd + "`", "", "## 기능", ""]
         lines += [f"- {f.id} {f.title}: {f.description}" for f in spec.features]
     lines += ["", "## 검증 기록", ""]
     for name in ("plan", "build"):
