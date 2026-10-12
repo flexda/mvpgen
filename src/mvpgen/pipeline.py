@@ -33,6 +33,10 @@ class StageFailed(RuntimeError):
     pass
 
 
+class AgentAborted(RuntimeError):
+    """세션이 작업을 시작하지 못하고 끝났다 (API 오류, CLI 실행 실패). 재시도해도 같은 결과가 나온다."""
+
+
 @dataclass
 class RunConfig:
     idea: str
@@ -112,6 +116,9 @@ class Pipeline:
         self._record_run(run, round_no)
         if run.subtype == "error_max_budget_usd":
             raise BudgetExceeded("세션이 남은 예산을 모두 썼다")
+        if run.api_error or run.subtype == "no_result":
+            detail = run.result_text or run.error or run.subtype
+            raise AgentAborted(f"{stage} 세션이 API 오류로 끝났다: {detail}")
         return run
 
     # ---- 검사기 ----
@@ -305,7 +312,7 @@ class Pipeline:
             await self.plan()
             await self.build()
             self.final_verify()
-        except (BudgetExceeded, StageFailed) as e:
+        except (BudgetExceeded, StageFailed, AgentAborted) as e:
             error = str(e)
             print(f"\n중단: {error}", flush=True)
         report_path = self.write_report(error)

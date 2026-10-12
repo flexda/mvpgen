@@ -36,6 +36,7 @@ class AgentRun:
     session_id: str | None = None
     error: str | None = None
     gate: dict[str, Any] | None = None
+    api_error: bool = False
     result_text: str | None = field(default=None, repr=False)
 
     def to_dict(self) -> dict[str, Any]:
@@ -138,5 +139,7 @@ async def run_agent(
         session_id=result.session_id,
         error=error or ("; ".join(map(str, result.errors)) if result.errors else None),
         gate=gate.stats() if gate else None,
+        # subtype은 success인데 is_error면 모델이 일을 하지 못하고 API 오류(인증, 크레딧 등)로 끝난 것
+        api_error=result.is_error and result.subtype == "success",
         result_text=result.result,
     )

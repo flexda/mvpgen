@@ -92,3 +92,19 @@ async def test_budget_stops_pipeline(tmp_path, monkeypatch):
     assert await Pipeline(config, run_dir).run() is False
     report = json.loads((run_dir / "run_report.json").read_text())
     assert "예산" in report["error"]
+
+
+async def test_api_error_aborts_with_real_message(tmp_path, monkeypatch):
+    calls = []
+
+    async def failing_agent(*, stage, **kw):
+        calls.append(stage)
+        return AgentRun(stage, False, "success", 0.0, 1, 0.01, api_error=True, result_text="Credit balance is too low")
+
+    monkeypatch.setattr(pipeline_mod, "run_agent", failing_agent)
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    assert await Pipeline(RunConfig(idea="x", out_dir=tmp_path), run_dir).run() is False
+    report = json.loads((run_dir / "run_report.json").read_text())
+    assert "Credit balance is too low" in report["error"]
+    assert calls == ["plan"]
