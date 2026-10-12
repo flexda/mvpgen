@@ -40,7 +40,27 @@ GitHub Actions에서 실행하면 API 키가 필요 없다. 워크플로는 `.gi
 
 로컬에서 페더레이션을 쓰려면 `secrets/claude.env`의 방법 2를 채우고, IdP가 발급한 JWT를 `ANTHROPIC_IDENTITY_TOKEN_FILE` 경로에 계속 새로 써 줘야 한다. `~/.config/anthropic`의 federation 프로필도 인식한다.
 
-## 실행
+## 빠른 사용법 (GitHub Actions)
+
+```bash
+# 1. 실행 (Actions 탭의 Run workflow와 같다)
+gh workflow run mvpgen.yml -R flexda/mvpgen -f idea="만들 앱 한 줄 설명" -f budget=3 -f effort=high
+
+# 2. 진행 확인
+gh run list -R flexda/mvpgen --workflow mvpgen.yml --limit 3
+gh run watch <RUN_ID> -R flexda/mvpgen
+
+# 3. 결과 내려받기 (workspace/는 git에서 제외됨)
+gh run download <RUN_ID> -R flexda/mvpgen -D workspace/ci-<RUN_ID>
+
+# 4. 생성된 앱 실행 (경로와 명령은 결과 폴더의 README.md에 있다)
+cd workspace/ci-<RUN_ID>/mvpgen-<RUN_ID>/<slug>/app
+uv sync
+export PORT=8000
+uv run uvicorn app.main:app --host 127.0.0.1 --port $PORT   # 스택마다 다름. spec.json의 run_cmd 참고
+```
+
+## 로컬 실행
 
 ```bash
 uv run mvpgen "할 일 목록 웹앱: 추가, 완료 표시, 삭제"
