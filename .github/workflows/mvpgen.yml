@@ -1,0 +1,100 @@
+# mvpgen을 GitHub Actions에서 API 키 없이 실행한다 (Workload Identity Federation).
+#
+# 저장소 Settings > Secrets and variables > Actions > Variables 에 등록할 값 (비밀값 아님):
+#   ANTHROPIC_FEDERATION_RULE_ID   fdrl_...
+#   ANTHROPIC_ORGANIZATION_ID      조직 UUID
+#   ANTHROPIC_SERVICE_ACCOUNT_ID   svac_...
+#   ANTHROPIC_WORKSPACE_ID         wrkspc_... (규칙이 여러 워크스페이스에 걸쳐 있을 때만)
+# 선택 Secret:
+#   MVP_ENV   생성될 MVP가 쓸 외부 API 키. secrets/mvp.env와 같은 KEY=VALUE 여러 줄
+#
+# federation 규칙의 match는 이 워크플로가 만드는 토큰과 맞아야 한다.
+#   iss: https://token.actions.githubusercontent.com
+#   aud: https://api.anthropic.com (--oidc-audience로 변경 가능)
+#   sub: workflow_dispatch를 main에서 실행하면 repo:<owner>/<repo>:ref:refs/heads/main
+
+name: mvpgen
+
+on:
+  workflow_dispatch:
+    inputs:
+      idea:
+        description: "만들 MVP 아이디어 한 줄"
+        required: true
+        type: string
+      budget:
+        description: "비용 상한 (USD, SDK 추정치)"
+        required: false
+        default: "10"
+        type: string
+      effort:
+        description: "low, medium, high, xhigh, max"
+        required: false
+        default: "high"
+        type: choice
+        options: [low, medium, high, xhigh, max]
+
+permissions:
+  id-token: write   # GitHub OIDC 토큰 발급에 필요
+  contents: read
+
+concurrency:
+  group: mvpgen-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      ANTHROPIC_FEDERATION_RULE_ID: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
+      ANTHROPIC_ORGANIZATION_ID: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
+      ANTHROPIC_SERVICE_ACCOUNT_ID: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+      ANTHROPIC_IDENTITY_TOKEN_FILE: ${{ runner.temp }}/anthropic-oidc.jwt
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: astral-sh/setup-uv@v10.0.0
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Check federation variables
+        run: |
+          missing=0
+          for v in ANTHROPIC_FEDERATION_RULE_ID ANTHROPIC_ORGANIZATION_ID ANTHROPIC_SERVICE_ACCOUNT_ID; do
+            if [ -z "${!v}" ]; then echo "::error::저장소 Variables에 $v가 없다"; missing=1; fi
+          done
+          exit $missing
+
+      - name: Write MVP API keys
+        env:
+          MVP_ENV: ${{ secrets.MVP_ENV }}
+        run: |
+          mkdir -p secrets
+          umask 077
+          printf '%s\n' "$MVP_ENV" > secrets/mvp.env
+
+      - name: Generate MVP
+        env:
+          IDEA: ${{ inputs.idea }}
+          BUDGET: ${{ inputs.budget }}
+          EFFORT: ${{ inputs.effort }}
+          WORKSPACE_ID: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
+        run: |
+          # 빈 값이 우선순위를 차지하지 않도록 값이 있을 때만 export한다
+          if [ -n "$WORKSPACE_ID" ]; then export ANTHROPIC_WORKSPACE_ID="$WORKSPACE_ID"; fi
+          uv run mvpgen "$IDEA" --budget "$BUDGET" --effort "$EFFORT"
+
+      - name: Upload result
+        if: always()
+        uses: actions/upload-artifact@v7.0.0
+        with:
+          name: mvpgen-${{ github.run_id }}
+          path: |
+            workspace/
+            !workspace/**/node_modules/
+            !workspace/**/.venv/
+            !workspace/**/snapshots/
+          if-no-files-found: warn
+          retention-days: 14

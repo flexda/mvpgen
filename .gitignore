@@ -1,0 +1,16 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+workspace/
+
+# API 키 (예시 파일과 설명만 저장소에 남긴다)
+secrets/*
+!secrets/*.example
+!secrets/README.md
