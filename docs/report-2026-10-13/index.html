@@ -1,0 +1,677 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>mvpgen 1차 실험 보고서</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: 왼쪽 목차 + 오른쪽 본문(좁은 화면에서는 목차가 위로). 실험 노트처럼 절 번호는 실제 읽는 순서를 따른다 */
+:root {
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --fg: #1b2230;
+  --muted: #5a6476;
+  --line: #dce1e9;
+  --accent: #2c5aa8;
+  --accent-soft: #e5edfa;
+  --ok: #1d7549;
+  --ok-soft: #e3f3ea;
+  --warn: #965800;
+  --warn-soft: #fff3de;
+  --bad: #b03a2e;
+  --bad-soft: #fbe7e4;
+  --shot-bg: #e8ebf0;
+  --font-body: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Noto Sans KR", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #11151c; --surface: #191f28; --fg: #e3e7ee; --muted: #98a2b3; --line: #2b3341;
+    --accent: #80a7ec; --accent-soft: #1e2b43; --ok: #5cc690; --ok-soft: #15291f;
+    --warn: #e2a74b; --warn-soft: #33270f; --bad: #ef8a7d; --bad-soft: #36191a; --shot-bg: #0c1016;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #11151c; --surface: #191f28; --fg: #e3e7ee; --muted: #98a2b3; --line: #2b3341;
+  --accent: #80a7ec; --accent-soft: #1e2b43; --ok: #5cc690; --ok-soft: #15291f;
+  --warn: #e2a74b; --warn-soft: #33270f; --bad: #ef8a7d; --bad-soft: #36191a; --shot-bg: #0c1016;
+  color-scheme: dark;
+}
+body {
+  background: var(--bg); color: var(--fg);
+  font-family: var(--font-body); font-size: 15px; line-height: 1.75;
+  padding-inline: 16px; padding-block: 32px 80px;
+}
+.layout { max-width: 1120px; margin: 0 auto; display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 48px; align-items: start; }
+@media (max-width: 900px) { .layout { grid-template-columns: minmax(0, 1fr); gap: 24px; } }
+nav.toc { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 16px); font-size: 0.86rem; display: grid; gap: 6px; }
+@media (max-width: 900px) { nav.toc { position: static; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; } }
+nav.toc ol { margin: 0; padding-left: 1.4em; display: grid; gap: 3px; }
+nav.toc a { color: var(--muted); text-decoration: none; }
+nav.toc a:hover, nav.toc a:focus-visible { color: var(--accent); text-decoration: underline; }
+main { display: grid; gap: 56px; min-width: 0; }
+h1, h2, h3 { line-height: 1.35; text-wrap: balance; margin: 0; }
+h1 { font-size: 1.9rem; font-weight: 700; }
+h2 { font-size: 1.3rem; font-weight: 700; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+h3 { font-size: 1.02rem; font-weight: 700; margin-top: 8px; }
+p { margin: 0; max-width: 68ch; }
+section { display: grid; gap: 16px; min-width: 0; scroll-margin-top: 16px; }
+code, .mono { font-family: var(--font-mono); font-size: 0.86em; }
+code { background: var(--accent-soft); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+a { color: var(--accent); }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.lead { color: var(--muted); }
+.eyebrow { font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-family: var(--font-mono); }
+ul.plain, ol.plain { margin: 0; padding-left: 1.3em; display: grid; gap: 6px; max-width: 72ch; }
+
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.kpi { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; display: grid; gap: 2px; align-content: start; }
+.kpi .v { font-size: 1.35rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.kpi .k { font-size: 0.8rem; color: var(--muted); }
+
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+tr:last-child td, tr:last-child th { border-bottom: none; }
+thead th { font-weight: 500; color: var(--muted); font-size: 0.8rem; background: var(--bg); white-space: nowrap; }
+tbody th { font-weight: 500; color: var(--muted); font-size: 0.84rem; background: var(--bg); white-space: nowrap; }
+td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.tag { display: inline-block; font-size: 0.74rem; font-weight: 500; padding: 0 8px; border-radius: 999px; white-space: nowrap; border: 1px solid currentColor; }
+.tag.ok { color: var(--ok); }
+.tag.warn { color: var(--warn); }
+.tag.bad { color: var(--bad); }
+.tag.info { color: var(--accent); }
+
+.diagram { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px; overflow-x: auto; }
+.diagram pre.mermaid { margin: 0; background: transparent; font-family: var(--font-body); }
+.cap { font-size: 0.85rem; color: var(--muted); }
+
+.callout { border-radius: 8px; padding: 14px 16px; display: grid; gap: 6px; font-size: 0.93rem; }
+.callout.warn { background: var(--warn-soft); }
+.callout.bad { background: var(--bad-soft); }
+.callout.ok { background: var(--ok-soft); }
+.callout.info { background: var(--accent-soft); }
+
+ol.timeline { list-style: none; margin: 0; padding: 0; display: grid; }
+ol.timeline > li { display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: 14px; padding-bottom: 18px; position: relative; }
+ol.timeline > li .t { font-family: var(--font-mono); font-size: 0.8rem; color: var(--muted); padding-top: 2px; }
+ol.timeline > li .b { display: grid; gap: 4px; border-left: 2px solid var(--line); padding-left: 14px; min-width: 0; }
+ol.timeline > li.mark .b { border-left-color: var(--accent); }
+ol.timeline > li.issue .b { border-left-color: var(--warn); }
+ol.timeline h4 { margin: 0; font-size: 0.95rem; }
+ol.timeline p { font-size: 0.92rem; }
+
+.shots { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr); gap: 16px; align-items: start; }
+@media (max-width: 640px) { .shots { grid-template-columns: minmax(0, 1fr); } }
+figure { margin: 0; display: grid; gap: 8px; min-width: 0; }
+figure .frame { background: var(--shot-bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
+figure .frame.tall { max-height: 640px; overflow-y: auto; }
+figure img { display: block; width: 100%; height: auto; border-radius: 4px; }
+figcaption { font-size: 0.85rem; color: var(--muted); }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px; display: grid; gap: 8px; align-content: start; min-width: 0; }
+.card h4 { margin: 0; font-size: 0.97rem; }
+.card p, .card li { font-size: 0.9rem; }
+.card ul { margin: 0; padding-left: 1.2em; display: grid; gap: 4px; }
+</style>
+</head>
+<body>
+
+<div class="layout">
+  <nav class="toc" aria-label="목차">
+    <span class="eyebrow">목차</span>
+    <ol>
+      <li><a href="#summary">요약</a></li>
+      <li><a href="#goal">실험 목표와 범위</a></li>
+      <li><a href="#design">시스템 설계</a></li>
+      <li><a href="#dataflow">데이터 흐름</a></li>
+      <li><a href="#loops">검증 루프</a></li>
+      <li><a href="#ci">실행 환경과 인증</a></li>
+      <li><a href="#timeline">진행 경과</a></li>
+      <li><a href="#runs">실행 결과</a></li>
+      <li><a href="#problems">발견한 문제와 원인</a></li>
+      <li><a href="#gitpull">git pull이 필요해진 이유</a></li>
+      <li><a href="#unknowns">무지의 영역</a></li>
+      <li><a href="#next">다음 시스템 제안</a></li>
+      <li><a href="#unverified">미확인 항목</a></li>
+      <li><a href="#appendix">부록: 커밋</a></li>
+    </ol>
+  </nav>
+
+  <main>
+    <header style="display:grid;gap:10px">
+      <span class="eyebrow">flexda/mvpgen · 2026-10-12 ~ 2026-10-13 · 1차 구축</span>
+      <h1>mvpgen 1차 실험 보고서</h1>
+      <p class="lead">한 줄 아이디어를 기획, 구현, 검증까지 자동으로 진행해 실행 가능한 MVP로 만드는 시스템을 Claude Agent SDK로 구축하고, GitHub Actions에서 실제로 다섯 번 돌린 기록입니다. 설계, 데이터 흐름, 검증 루프, 겪은 문제와 원인, 그리고 다음 시스템에서 같은 일을 겪지 않기 위해 알아야 할 것을 정리했습니다.</p>
+    </header>
+
+    <!-- 1 -->
+    <section id="summary">
+      <h2>1. 요약</h2>
+      <div class="kpis">
+        <div class="kpi"><span class="v">5회</span><span class="k">Actions 실행 (성공 4, 크레딧 부족 1)</span></div>
+        <div class="kpi"><span class="v">$3.40</span><span class="k">성공 실행 비용 합계 (SDK 추정)</span></div>
+        <div class="kpi"><span class="v">0회</span><span class="k">critic 불합격과 Stop hook block</span></div>
+        <div class="kpi"><span class="v">73개</span><span class="k">오프라인 테스트 통과</span></div>
+        <div class="kpi"><span class="v">11개</span><span class="k">커밋 (10-12에 6, 10-13에 5)</span></div>
+      </div>
+      <div class="callout info">
+        <strong>한 문단 결론</strong>
+        <p>파이프라인은 끝까지 돌아가고, 인증 없이 키를 쓰지 않는 Actions 실행, 아이디어 의도 대조, 참고 자료 반영까지 실제로 확인했습니다. 그러나 다섯 번의 실행 모두 critic이 첫 라운드에 합격시켰고 Stop hook도 한 번도 막지 않았습니다. 그래서 이 시스템의 핵심인 "스스로 고치는 루프"가 실제로 작동하는지는 아직 증명되지 않았습니다. 동시에 검증 기준 밖의 결함(휴대폰 화면 깨짐)은 사람이 스크린샷을 보고서야 발견했습니다. 다음 시스템의 과제는 루프를 더 돌리는 것이 아니라, 검증이 무엇을 못 보는지를 먼저 측정하는 것입니다.</p>
+      </div>
+    </section>
+
+    <!-- 2 -->
+    <section id="goal">
+      <h2>2. 실험 목표와 범위</h2>
+      <div class="table-wrap"><table><tbody>
+        <tr><th>목표</th><td>한 줄 아이디어를 넣으면 기획, 구현, 검증을 거쳐 실행 가능한 MVP 폴더가 나오는 시스템</td></tr>
+        <tr><th>입력과 출력</th><td>입력은 아이디어 한 줄과 선택 사항(참고 자료 폴더, 외부 API 키), 출력은 동작하는 코드와 기획서, 평가 기록, 실행 리포트</td></tr>
+        <tr><th>구현</th><td>Claude Agent SDK (Python, uv), 모델 <code>claude-opus-5-5</code>, 모듈 14개 약 1,800줄</td></tr>
+        <tr><th>실행 장소</th><td>GitHub Actions (<code>workflow_dispatch</code>). 로컬에는 API 키가 없음</td></tr>
+        <tr><th>범위 밖</th><td>배포, 다중 사용자, 생성된 앱의 장기 유지보수</td></tr>
+        <tr><th>1차 종료 기준</th><td>사용자가 2026-10-13에 1차 구축 종료를 선언. 이후는 기능 추가가 아니라 문제점 점검 단계</td></tr>
+      </tbody></table></div>
+    </section>
+
+    <!-- 3 -->
+    <section id="design">
+      <h2>3. 시스템 설계</h2>
+      <p>핵심 결정은 "LLM 하나에 전체를 맡기지 않는다"입니다. 단계 순서, 합격 판정, 예산, 상태 저장은 Python 오케스트레이터가 정하고, LLM은 각 단계 안의 생성과 평가만 맡습니다.</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>결정</th><th>선택</th><th>이유</th></tr></thead>
+        <tbody>
+          <tr><td>오케스트레이션</td><td>Python 코드가 단계와 판정을 결정</td><td>LLM이 스스로 "다 됐다"고 판단하는 것을 믿지 않기 위해</td></tr>
+          <tr><td>단계 분리</td><td>Plan, Build, 최종 검증, 리포트가 각각 별도 <code>query()</code> 세션</td><td>단계 사이는 파일로만 넘겨 맥락 오염을 막음</td></tr>
+          <tr><td>스택</td><td>Plan 에이전트가 아이디어에 맞게 선택</td><td>사용자 선택</td></tr>
+          <tr><td>도구 권한</td><td>단계별 도구 허용 목록 + <code>permission_mode="dontAsk"</code></td><td>목록 밖 도구는 묻지 않고 거부</td></tr>
+          <tr><td>설정 격리</td><td><code>setting_sources=[]</code></td><td>사용자와 프로젝트의 Claude Code 설정이 끼어들지 않게</td></tr>
+          <tr><td>인증</td><td>Workload Identity Federation</td><td>저장소와 러너에 API 키를 두지 않기 위해</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>모듈 구성</h3>
+      <div class="table-wrap"><table>
+        <thead><tr><th>모듈</th><th>역할</th><th>줄 수</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">pipeline.py</td><td>단계 순서, 생성자와 critic 루프, 예산, 상태 저장, 폴더 이름 변경, 리포트</td><td class="num">409</td></tr>
+          <tr><td class="mono">prompts.py</td><td>단계별 시스템 프롬프트, 작업 프롬프트, 참고 자료 안내</td><td class="num">181</td></tr>
+          <tr><td class="mono">verify.py</td><td>install, test, 실행과 smoke (LLM 없음)</td><td class="num">176</td></tr>
+          <tr><td class="mono">guards.py</td><td>PreToolUse: 위험 명령, 작업 폴더 밖 쓰기, 보호 폴더 접근, 비밀값 기입 차단</td><td class="num">154</td></tr>
+          <tr><td class="mono">agents.py</td><td><code>query()</code> 래퍼, 콘솔 출력, 로그, 비용 수집</td><td class="num">145</td></tr>
+          <tr><td class="mono">identity.py</td><td>인증 수단 판별, GitHub OIDC 토큰 60초 갱신</td><td class="num">144</td></tr>
+          <tr><td class="mono">critic.py</td><td>review 스키마, 합격 판정, 스냅샷과 롤백</td><td class="num">126</td></tr>
+          <tr><td class="mono">cli.py</td><td>명령행 옵션, 실행 폴더 결정, <code>--resume</code>, <code>--context</code>, <code>--lessons</code></td><td class="num">116</td></tr>
+          <tr><td class="mono">spec.py</td><td>spec.json 스키마(<code>intent</code> 포함), Plan 검사</td><td class="num">110</td></tr>
+          <tr><td class="mono">envfiles.py</td><td><code>secrets/claude.env</code>, <code>mvp.env</code> 로딩</td><td class="num">73</td></tr>
+          <tr><td class="mono">lessons.py</td><td>실행 간 교훈 누적, 병합</td><td class="num">57</td></tr>
+          <tr><td class="mono">context.py</td><td>참고 자료 복사와 비밀값 검사</td><td class="num">56</td></tr>
+          <tr><td class="mono">gates.py</td><td>Stop hook 게이트</td><td class="num">46</td></tr>
+          <tr><td class="mono">rubrics.py</td><td>Plan 6항목, Build 5항목 루브릭</td><td class="num">20</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>파이프라인 구조</h3>
+      <div class="diagram">
+<pre class="mermaid">
+flowchart TD
+  I["아이디어 + 참고 자료(context/) + lessons.md"] --> P["Plan 세션: PRD.md, spec.json 작성"]
+  P -->|"종료 시도"| G1{"Stop hook: spec 스키마, intent, PRD 제목"}
+  G1 -->|"실패: block, 최대 3회"| P
+  G1 -->|"통과"| C1["Plan critic: 새 세션, 루브릭 6항목"]
+  C1 -->|"80점 미만 또는 critical"| P
+  C1 -->|"합격"| R["폴더 이름 변경: 시각-mvp 를 시각-spec.name 으로"]
+  R --> B["Build 세션: app/ 구현"]
+  B -->|"종료 시도"| G2{"Stop hook: install, test, 실행+smoke"}
+  G2 -->|"실패: block"| B
+  G2 -->|"통과"| C2["Build critic: 앱을 직접 띄워 확인, 루브릭 5항목"]
+  C2 -->|"불합격"| B
+  C2 -->|"합격"| V["최종 검증: LLM 없이 install, test, smoke"]
+  V --> O["README.md, run_report.json"]
+  C1 -.->|"major 이상 지적"| L["lessons.md"]
+  C2 -.->|"major 이상 지적"| L
+</pre>
+      </div>
+      <p class="cap">개정은 단계별 최대 2회이고, 점수가 직전 최고점보다 떨어지면 최고점 라운드의 산출물로 되돌립니다. 개정 한도에 닿으면 최고점 라운드로 진행합니다.</p>
+    </section>
+
+    <!-- 4 -->
+    <section id="dataflow">
+      <h2>4. 데이터 흐름</h2>
+      <p>단계 사이에서 넘어가는 것은 모두 파일입니다. 세션끼리는 대화를 공유하지 않습니다. 그래서 어떤 파일을 누가 쓰고 누가 읽는지가 곧 시스템의 인터페이스입니다.</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>파일</th><th>쓰는 쪽</th><th>읽는 쪽</th><th>보관</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">context/*</td><td>CLI (<code>--context</code> 복사)</td><td>Plan, Build, 두 critic</td><td>실행 폴더</td></tr>
+          <tr><td class="mono">PRD.md, spec.json</td><td>Plan 세션만 (가드가 강제)</td><td>Plan 검사, Plan critic, Build, 검증기</td><td>실행 폴더</td></tr>
+          <tr><td class="mono">app/</td><td>Build 세션만</td><td>Build 검사, Build critic, 최종 검증</td><td>실행 폴더</td></tr>
+          <tr><td class="mono">reviews/*.json</td><td>각 critic이 자기 파일만</td><td>오케스트레이터 (합격 판정, 개정 지시)</td><td>실행 폴더</td></tr>
+          <tr><td class="mono">snapshots/</td><td>오케스트레이터</td><td>롤백</td><td>실행 폴더 (artifact에서는 제외)</td></tr>
+          <tr><td class="mono">logs/*.log</td><td>agents.py</td><td>사람</td><td>실행 폴더</td></tr>
+          <tr><td class="mono">state.json</td><td>오케스트레이터</td><td><code>--resume</code></td><td>실행 폴더 (절대 경로 없음)</td></tr>
+          <tr><td class="mono">run_report.json, README.md</td><td>오케스트레이터</td><td>사람</td><td>실행 폴더</td></tr>
+          <tr><td class="mono">lessons.md</td><td>오케스트레이터, Actions의 save-lessons</td><td>다음 실행의 Plan, Build</td><td>저장소 루트 (10-13 변경)</td></tr>
+          <tr><td class="mono">secrets/mvp.env</td><td>사람 / Actions가 Secret에서 생성</td><td>앱 실행 환경 (값), 프롬프트 (이름만)</td><td>git 제외</td></tr>
+        </tbody>
+      </table></div>
+      <div class="diagram">
+<pre class="mermaid">
+flowchart LR
+  subgraph IN["입력"]
+    idea["아이디어"]
+    ctx["참고 자료 폴더"]
+    keys["mvp.env 키"]
+    les["lessons.md"]
+  end
+  subgraph RUN["실행 폴더 workspace/시각-이름/"]
+    c["context/"]
+    plan["PRD.md / spec.json"]
+    app["app/"]
+    rev["reviews/"]
+    st["state.json / logs/"]
+    rep["run_report.json / README.md"]
+  end
+  ctx -->|"비밀값 검사 후 복사"| c
+  idea --> plan
+  c --> plan
+  les --> plan
+  plan --> app
+  c --> app
+  keys -->|"값은 실행 환경으로만"| app
+  plan --> rev
+  app --> rev
+  rev -->|"major 이상"| les
+  app --> rep
+  rev --> rep
+</pre>
+      </div>
+      <div class="callout warn">
+        <strong>설계상 약점</strong>
+        <p>폴더 이름이 실행 중간에 바뀝니다. 상태 파일에 절대 경로를 두지 않아 추적은 이어지지만, 시작 로그에 찍힌 경로와 끝난 뒤의 경로가 다르고 <code>--resume</code>에는 옛 이름을 찾는 보완 코드가 필요했습니다. 실행 ID와 표시 이름을 처음부터 분리했다면 필요 없었던 복잡도입니다(12절).</p>
+      </div>
+    </section>
+
+    <!-- 5 -->
+    <section id="loops">
+      <h2>5. 검증 루프</h2>
+      <p>설계상 루프는 네 겹입니다. 아래 표의 마지막 열이 이번 실험의 핵심 관찰입니다.</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>루프</th><th>위치</th><th>판정 주체</th><th>무엇을 보나</th><th>실제 작동</th></tr></thead>
+        <tbody>
+          <tr><td>Stop hook 게이트</td><td>세션 안</td><td>코드 (결정적)</td><td>Plan: 스키마, intent, PRD 제목 / Build: install, test, 실행, smoke 문자열</td><td><span class="tag warn">block 0회</span> 오프라인 테스트로만 확인</td></tr>
+          <tr><td>독립 critic</td><td>세션 밖</td><td>LLM (같은 모델)</td><td>루브릭 항목, Build는 앱을 띄워 curl로 확인</td><td><span class="tag warn">불합격 0회</span> 5회 모두 1라운드 합격</td></tr>
+          <tr><td>최종 검증</td><td>파이프라인 끝</td><td>코드</td><td>install, test, smoke</td><td><span class="tag ok">작동</span> 모두 통과</td></tr>
+          <tr><td>lessons.md</td><td>실행 사이</td><td>코드</td><td>major 이상 지적만 누적</td><td><span class="tag bad">사실상 미작동</span> CI에서 매번 초기화(10-13 수정), 지적은 대부분 minor</td></tr>
+        </tbody>
+      </table></div>
+      <div class="cards">
+        <div class="card">
+          <h4>결정적 검사가 보는 것</h4>
+          <p>설치가 되는가, 테스트가 통과하는가, 서버가 떠서 응답 본문에 특정 문자열이 있는가. 화면이 깨져도, 버튼이 화면 밖에 있어도 이 문자열만 있으면 통과합니다.</p>
+        </div>
+        <div class="card">
+          <h4>critic이 보는 것</h4>
+          <p>루브릭에 적힌 것. 이번 Build 루브릭에는 화면 폭이나 접근성 항목이 없었고, critic은 브라우저 없이 curl로만 확인했습니다. 생성자와 같은 모델이라 같은 맹점을 공유할 가능성도 있습니다.</p>
+        </div>
+        <div class="card">
+          <h4>아무도 보지 않은 것</h4>
+          <ul>
+            <li>실제 브라우저 렌더링과 휴대폰 폭</li>
+            <li>외부 API를 실제 키로 부르는 경로</li>
+            <li>데이터의 최신성(10-06 수집 샘플)</li>
+            <li>루프 자체가 결함을 잡는 능력</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- 6 -->
+    <section id="ci">
+      <h2>6. 실행 환경과 인증</h2>
+      <p>GitHub Actions가 발급하는 OIDC 토큰을 Anthropic의 Workload Identity Federation 규칙과 교환해 API를 씁니다. 저장소와 러너에 API 키가 없습니다. 대신 규칙의 조건(제목 접두사, 필수 클레임)이 <code>refs/heads/main</code>과 <code>workflow_dispatch</code>에 묶여 있어 다른 브랜치에서는 실행할 수 없습니다.</p>
+      <div class="table-wrap"><table><tbody>
+        <tr><th>토큰 교환</th><td>mvpgen이 GitHub OIDC 토큰을 받아 <code>ANTHROPIC_IDENTITY_TOKEN_FILE</code>에 쓰고 60초마다 갱신. GitHub 토큰은 약 5분 뒤 만료되고 한 번만 교환 가능</td></tr>
+        <tr><th>토큰 보호</th><td>토큰 발급 권한 변수는 읽은 직후 환경에서 지움. 페더레이션 변수와 토큰 파일은 생성된 앱의 실행 환경에 넘기지 않음. 에이전트가 해당 이름에 접근하는 명령은 가드가 차단</td></tr>
+        <tr><th>범위와 수명</th><td><code>workspace:developer</code>, 3,600초</td></tr>
+        <tr><th>실행 직렬화</th><td><code>concurrency: mvpgen-ref</code>, <code>cancel-in-progress: false</code>. 두 번째 실행은 첫 실행이 끝날 때까지 대기</td></tr>
+      </tbody></table></div>
+      <h3>잡과 권한 (10-13 이후)</h3>
+      <div class="diagram">
+<pre class="mermaid">
+flowchart LR
+  subgraph J1["generate 잡: id-token write, contents read"]
+    a1["checkout (dispatch 시점 커밋)"] --> a2["MVP_ENV Secret을 secrets/mvp.env로"]
+    a2 --> a3["mvpgen 실행 (에이전트가 도는 곳)"]
+    a3 --> a4["artifact: workspace/"]
+    a3 --> a5["artifact: lessons.md"]
+  end
+  subgraph J2["save-lessons 잡: contents write"]
+    b1["checkout 최신 main"] --> b2["lessons artifact 다운로드"]
+    b2 --> b3["merge_lessons: 양쪽 항목 보존"]
+    b3 --> b4{"변경 있음?"}
+    b4 -->|"예"| b5["github-actions bot이 main에 commit, push"]
+    b4 -->|"아니오"| b6["종료"]
+  end
+  a5 --> b2
+</pre>
+      </div>
+      <p class="cap">쓰기 권한은 에이전트가 돌지 않는 save-lessons 잡에만 있습니다. 에이전트가 쓰기 권한 토큰에 닿을 경로를 만들지 않으려고 잡을 둘로 나눴습니다.</p>
+    </section>
+
+    <!-- 7 -->
+    <section id="timeline">
+      <h2>7. 진행 경과</h2>
+      <h3>10-12: 구축과 첫 실행</h3>
+      <ol class="timeline">
+        <li class="mark"><span class="t">14:12</span><div class="b"><h4>최초 구현 커밋</h4><p>요구 확인, Agent SDK 문서 확인, 사용자 질문("스스로 검증하고 개선하는 루프가 있나")에 따라 Stop hook과 critic 추가. 모듈 12개와 오프라인 테스트.</p></div></li>
+        <li class="issue"><span class="t">이후</span><div class="b"><h4>Federation 규칙 두 차례 수정</h4><p>규칙 제목 접두사를 옛 형식으로 안내했다가, GitHub API로 실제 토큰 형식(owner와 저장소 숫자 ID 포함)을 조회해 정정.</p></div></li>
+        <li class="issue"><span class="t">15:36</span><div class="b"><h4>워크플로가 시작되지 않음 (HTTP 422)</h4><p>job 수준 <code>env</code>에서 <code>runner</code> 컨텍스트를 쓸 수 없음. 제거.</p></div></li>
+        <li class="issue"><span class="t">15:38</span><div class="b"><h4>1차 실행: 크레딧 부족</h4><p>인증은 통과로 보였으나 <code>Credit balance is too low</code>. 그런데 "자동 검사 실패"로 잘못 보고됨. API 오류면 즉시 중단하고 원문 메시지를 보이게 수정.</p></div></li>
+        <li class="mark"><span class="t">15:45</span><div class="b"><h4>2차 실행 성공 (메모장, $0.44, 약 3분)</h4><p>Build critic이 생성된 README의 <code>PORT=8000 cmd --port $PORT</code>가 동작하지 않음을 지적(major). README 생성기와 Build 프롬프트 수정. 이 지적이 lessons.md의 첫 항목.</p></div></li>
+        <li><span class="t">15:52</span><div class="b"><h4>ARCHIVE와 README 빠른 사용법</h4></div></li>
+      </ol>
+      <h3>10-13: 리뷰, 확장, 실험, 마무리</h3>
+      <ol class="timeline">
+        <li><span class="t">오전</span><div class="b"><h4>코드 리뷰 (/code-review)</h4><p>README 빠른 사용법에서 지적 8건: 스택 고정 설치 명령, slug 설명 없음, 결과물 없을 때 안내 없음, zip 실행 권한, 낮은 예산 예시, <code>--ref main</code> 누락, 중복. 모두 반영.</p></div></li>
+        <li><span class="t"></span><div class="b"><h4>질문: 한글 아이디어와 폴더 이름</h4><p>한글은 동작에 문제없고 폴더 이름만 <code>시각-mvp</code>. Plan이 만드는 영문 <code>spec.name</code>을 재사용하기로 결정.</p></div></li>
+        <li><span class="t"></span><div class="b"><h4>질문: 의도 검증 루프 뒤 이름 변경 시 추적 가능성</h4><p>상태 파일에 절대 경로가 없고 세션을 재사용하지 않아 가능하다고 판단. 새 루프 대신 Plan 루프 강화(intent + Stop gate + 루브릭 6번).</p></div></li>
+        <li class="issue"><span class="t">11:49</span><div class="b"><h4>구현과 커밋 7f1a5bd</h4><p>외부 검토(advisor)가 <code>-mvp</code>로 끝나는 모든 이름을 바꾸는 버그를 지적(<code>todo-mvp</code>가 <code>todo-fake-todo</code>로 바뀜). 정확한 형태만 바꾸도록 수정. main에 직접 커밋한 것은 실수로 기록.</p></div></li>
+        <li class="issue"><span class="t"></span><div class="b"><h4>의사소통 혼선</h4><p>브랜치와 federation 관계를 기술 용어로 설명해 사용자가 "다시 설명해"를 요청. 결정을 위해 경과 HTML을 만들어 공유.</p></div></li>
+        <li class="mark"><span class="t">12:04</span><div class="b"><h4>전후 비교 실행</h4><p>push 전에 예전 코드로 실행(커밋 5094fa7에 묶인 것 확인), push 후 같은 아이디어로 새 코드 실행. 직렬화 설정 덕에 두 번째는 대기 후 실행.</p></div></li>
+        <li class="issue"><span class="t"></span><div class="b"><h4>참고 자료 요청과 키 발견</h4><p>"오늘 뭐하지" 앱용 조사 자료 폴더의 API 문서에 서비스키 값이 그대로 들어 있었음. 키 확인 명령은 auto mode가 Credential Exploration으로 차단. 사용자가 다른 도구로 키를 옮겼고, 그 도구의 작업 로그에 키 값이 그대로 출력됨. <code>mvp.env</code>가 새로 만들어져 기존 내용이 덮였을 가능성.</p></div></li>
+        <li class="issue"><span class="t">12:31</span><div class="b"><h4>--context 구현, 자료 커밋은 차단</h4><p>자료 복사 시 <code>mvp.env</code> 값과 대조하는 검사 추가. 키를 지운 사본의 커밋이 Sensitive-Source Provenance로 차단되어 코드만 커밋. 사용자가 명시적으로 지시한 뒤 자료 커밋 성공(12:51).</p></div></li>
+        <li><span class="t"></span><div class="b"><h4>Remote Control</h4><p>사용자가 <code>/remote-control</code>로 휴대폰에서 세션을 조종. 이후 결과 파일과 스크린샷을 세션으로 전송.</p></div></li>
+        <li class="mark"><span class="t">12:51</span><div class="b"><h4>"오늘 뭐하지" 생성 ($1.96, 8.6분)</h4><p>맥에서 앱을 띄워 headless Chrome으로 스크린샷. 휴대폰 폭에서 가로 넘침 발견. 검증 루프 어디에서도 잡히지 않은 결함.</p></div></li>
+        <li class="issue"><span class="t"></span><div class="b"><h4>"새로운 아이디어로 비교" 혼선</h4><p>사용자는 비교가 예전 아이디어로 진행됐다고 기억. 실제로는 새 아이디어(책 기록장)였음을 결과 표로 확인.</p></div></li>
+        <li class="issue"><span class="t"></span><div class="b"><h4>workspace/는 왜 git 제외인가</h4><p>이유가 기록되어 있지 않았음. 추정하다가 lessons.md도 그 안에 있어 Actions에서는 매번 비어 있다는 것을 발견. README가 설명하는 세 번째 루프가 CI에서는 작동하지 않고 있었음.</p></div></li>
+        <li class="mark"><span class="t">13:32</span><div class="b"><h4>lessons.md 저장소 보관, save-lessons 잡</h4><p>쓰기 권한을 분리한 별도 잡이 최신 main에 병합 커밋. 실행 중 main이 바뀌어도 항목을 잃지 않게 병합 함수 추가.</p></div></li>
+        <li class="mark"><span class="t">13:48</span><div class="b"><h4>1차 구축 종료</h4><p>ARCHIVE 갱신, push. 이후는 문제점 점검 단계.</p></div></li>
+      </ol>
+    </section>
+
+    <!-- 8 -->
+    <section id="runs">
+      <h2>8. 실행 결과</h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>run</th><th>아이디어</th><th>코드</th><th>설정</th><th>Plan / Build</th><th>비용</th><th>시간</th><th>결과</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">1차</td><td>메모장</td><td class="mono">1335886</td><td>-</td><td>-</td><td class="num">$0</td><td>-</td><td><span class="tag bad">크레딧 부족</span></td></tr>
+          <tr><td class="mono"><a href="https://github.com/flexda/mvpgen/actions/runs/38213721713">38213721713</a></td><td>간단한 메모장 웹앱</td><td class="mono">ebb6563</td><td>low, $1</td><td class="num">88 / 87</td><td class="num">$0.44</td><td class="num">약 3분</td><td><span class="tag ok">성공</span></td></tr>
+          <tr><td class="mono"><a href="https://github.com/flexda/mvpgen/actions/runs/38339954369">38339954369</a></td><td>읽은 책 기록장</td><td class="mono">5094fa7</td><td>low, $2</td><td class="num">90 / 90</td><td class="num">$0.55</td><td class="num">2.7분</td><td><span class="tag ok">성공</span></td></tr>
+          <tr><td class="mono"><a href="https://github.com/flexda/mvpgen/actions/runs/38339966010">38339966010</a></td><td>읽은 책 기록장</td><td class="mono">7f1a5bd</td><td>low, $2</td><td class="num">88 / 90</td><td class="num">$0.45</td><td class="num">5.3분</td><td><span class="tag ok">성공</span></td></tr>
+          <tr><td class="mono"><a href="https://github.com/flexda/mvpgen/actions/runs/38343685543">38343685543</a></td><td>오늘 뭐하지 (+ 참고 자료)</td><td class="mono">e2c241e</td><td>high, $5</td><td class="num">88 / 92</td><td class="num">$1.96</td><td class="num">8.6분</td><td><span class="tag ok">성공</span></td></tr>
+        </tbody>
+      </table></div>
+      <p class="cap">시간은 Actions 실행의 시작과 마지막 갱신 시각 차이입니다. 비용은 SDK가 계산한 클라이언트 측 추정치입니다. 성공한 모든 실행이 critic 1라운드 합격, Stop hook block 0회였습니다.</p>
+
+      <h3>의도 검증 전후 비교 (책 기록장)</h3>
+      <div class="table-wrap"><table>
+        <thead><tr><th>항목</th><th>예전 코드</th><th>새 코드</th></tr></thead>
+        <tbody>
+          <tr><td>폴더</td><td class="mono">20261013-030441-mvp</td><td class="mono">20261013-030724-book-log</td></tr>
+          <tr><td>intent</td><td>없음</td><td>요구 3개를 기능에 연결</td></tr>
+          <tr><td>기능</td><td>6개 (아이디어에 없는 다 읽음 표시, 삭제 포함)</td><td>5개 (요구 3개 + 목록, 입력 검증)</td></tr>
+          <tr><td>Plan critic</td><td>대략적 총평</td><td>요구별 대조, "지어낸 요구 없음" 명시</td></tr>
+          <tr><td>공통 minor 지적</td><td colspan="2">smoke 문자열이 명세에 없음, 의존성 미명시, 400 화면 입력값 미유지, 접속 URL 없음. 두 실행 모두 같은 지적</td></tr>
+        </tbody>
+      </table></div>
+      <p class="cap">구조 변화는 확실합니다. 점수와 비용 차이는 1회씩이라 판단 근거가 되지 못합니다.</p>
+
+      <h3>오늘 뭐하지 결과 화면</h3>
+      <div class="shots">
+        <figure>
+          <div class="frame tall"><img src="today-mobile.png" alt="휴대폰 폭의 추천 목록. 마감 임박 순 12건" width="840" height="4400" loading="lazy"></div>
+          <figcaption>추천 목록, 휴대폰 폭 420px. 오른쪽이 잘립니다.</figcaption>
+        </figure>
+        <figure>
+          <div class="frame"><img src="today-desktop.png" alt="PC 폭의 추천 목록" width="1280" height="1400" loading="lazy"></div>
+          <figcaption>추천 목록, PC 폭 1280px</figcaption>
+        </figure>
+      </div>
+      <figure>
+        <div class="frame tall" style="max-width:420px"><img src="review-mobile.png" alt="확인 필요 데이터 페이지. 6건" width="840" height="3200" loading="lazy"></div>
+        <figcaption>확인 필요 페이지. 수집 실패 4건, 종료일 없음 1건, 제목과 작가 없음 1건. 표가 휴대폰 폭을 넘습니다.</figcaption>
+      </figure>
+      <p>참고 자료는 의도대로 반영됐습니다. 수집 CSV의 10개 컬럼과 <code>needs_review</code>를 그대로 썼고, MMCA API 문서의 엔드포인트와 필드를 따랐으며, 실행 중 크롤링은 하지 않았습니다. 앱 시작 시 네트워크를 부르지 않고 캐시만 읽도록 기획한 점도 자료의 성격을 이해한 결과입니다.</p>
+    </section>
+
+    <!-- 9 -->
+    <section id="problems">
+      <h2>9. 발견한 문제와 원인</h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>문제</th><th>어떻게 발견했나</th><th>근본 원인</th><th>상태</th></tr></thead>
+        <tbody>
+          <tr><td>Federation 규칙 접두사 오안내</td><td>문서 확인 중</td><td>토큰 형식을 기억에 의존. 실제 값을 조회하지 않음</td><td><span class="tag ok">수정</span></td></tr>
+          <tr><td>워크플로 시작 실패</td><td>1차 실행 422</td><td>GitHub 컨텍스트 사용 가능 범위를 몰랐음</td><td><span class="tag ok">수정</span></td></tr>
+          <tr><td>API 오류를 검사 실패로 보고</td><td>1차 실행 로그</td><td>실패 경로를 하나로 뭉쳐 처리</td><td><span class="tag ok">수정</span></td></tr>
+          <tr><td><code>PORT=8000 cmd $PORT</code> 동작 안 함</td><td>Build critic (major)</td><td>셸 변수 확장 순서</td><td><span class="tag ok">수정</span></td></tr>
+          <tr><td>README 사용법 8건</td><td>코드 리뷰</td><td>한 스택(FastAPI)만 가정, 실패 경로 안내 없음</td><td><span class="tag ok">수정</span></td></tr>
+          <tr><td>한글 아이디어의 폴더 이름</td><td>사용자 질문</td><td>폴더 이름을 실행 시작 시점에 아이디어 문자열로 결정</td><td><span class="tag ok">우회</span> 실행 중 이름 변경</td></tr>
+          <tr><td><code>todo-mvp</code> 오변경</td><td>외부 검토</td><td>접미사 비교로 대체 이름을 판정</td><td><span class="tag ok">수정</span></td></tr>
+          <tr><td>문서에 API 키 포함</td><td>자료 확인 중</td><td>자료 작성 시 키와 문서를 분리하지 않음</td><td><span class="tag ok">사본 정리</span> 원본은 그대로</td></tr>
+          <tr><td>다른 도구 로그에 키 값 노출</td><td>붙여넣은 작업 로그</td><td>키 이동을 사람이 범용 에이전트에 맡김. 출력 마스킹 없음</td><td><span class="tag warn">재발급 검토</span></td></tr>
+          <tr><td>휴대폰 화면 깨짐</td><td>사람이 스크린샷 확인</td><td>어떤 검증 단계도 브라우저와 화면 폭을 보지 않음</td><td><span class="tag bad">미해결</span></td></tr>
+          <tr><td>critic, gate가 한 번도 불합격시키지 않음</td><td>실행 리포트 집계</td><td>판정 기준이 느슨하거나, 아이디어가 쉬웠거나, 같은 모델의 자기 평가 편향. 원인 미구분</td><td><span class="tag bad">미해결</span></td></tr>
+          <tr><td>같은 minor 지적 반복</td><td>두 실행 review 비교</td><td>lessons가 major 이상만 기록</td><td><span class="tag warn">설계 판단 필요</span></td></tr>
+          <tr><td>lessons.md가 CI에서 매번 초기화</td><td>git 제외 이유를 추적하다가</td><td>상태 파일을 일회용 폴더에 둠. CI가 일회용 환경이라는 점을 설계에 반영하지 않음</td><td><span class="tag ok">수정</span> 미실행</td></tr>
+          <tr><td>생성된 앱의 버전 관리 불가</td><td>후속 작업 논의</td><td>결과물을 일회용 산출물로만 가정</td><td><span class="tag warn">미해결</span></td></tr>
+          <tr><td>main 직접 커밋</td><td>사용자 질문</td><td>저장소 관행을 따름. 인증이 main에 묶여 브랜치 실행 불가</td><td><span class="tag warn">구조적 제약</span></td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <!-- 10 -->
+    <section id="gitpull">
+      <h2>10. git pull이 필요해진 이유</h2>
+      <p>마지막 변경으로 저장소에 커밋하는 주체가 둘에서 셋이 되었습니다. 사용자와 Claude 세션, 그리고 Actions의 봇입니다. 봇은 실행이 끝날 때마다 새 교훈이 있으면 main에 <code>lessons.md</code>를 커밋합니다. 로컬 main이 그 커밋을 모르는 상태에서 새 커밋을 만들면, GitHub의 main과 로컬 main이 서로 다른 갈래가 되어 push가 거절됩니다.</p>
+      <div class="diagram">
+<pre class="mermaid">
+sequenceDiagram
+  participant L as 로컬 main
+  participant G as GitHub main
+  participant A as Actions
+  L->>G: push (A 커밋)
+  G->>A: workflow_dispatch, A 커밋으로 실행
+  A->>G: save-lessons가 B 커밋 push
+  Note over L: 로컬은 B를 모름
+  L->>L: 새 작업 C 커밋 (부모 A)
+  L->>G: push
+  G-->>L: 거절 (non-fast-forward)
+  L->>G: git pull 후 다시 push
+</pre>
+      </div>
+      <div class="callout info">
+        <strong>그래서</strong>
+        <p>Actions를 실행한 뒤 로컬에서 작업을 시작할 때는 <code>git pull</code>을 먼저 합니다. 이미 커밋했다면 <code>git pull --rebase</code>로 봇 커밋 위에 올리면 됩니다. 이 마찰은 상태(lessons)와 코드가 같은 브랜치에 있어서 생깁니다. 다음 시스템에서는 상태를 별도 브랜치나 저장소 밖에 두는 편이 낫습니다(12절).</p>
+      </div>
+    </section>
+
+    <!-- 11 -->
+    <section id="unknowns">
+      <h2>11. 무지의 영역</h2>
+      <p>이번 실험에서 문제를 일으킨 것은 대부분 모르는 것을 모른 상태에서 내린 가정이었습니다. 아래는 "몰랐다는 사실 자체를 나중에 알게 된 것"과 "아직 모르는 것"을 나눈 정리입니다.</p>
+
+      <h3>몰랐다는 것을 나중에 알게 된 것</h3>
+      <div class="table-wrap"><table>
+        <thead><tr><th>가정</th><th>실제</th><th>교훈</th></tr></thead>
+        <tbody>
+          <tr><td>검증을 통과하면 쓸 만한 앱이다</td><td>검증은 루브릭과 smoke 문자열만 봄. 화면이 깨져도 92점</td><td>검증이 보는 범위를 명시하고, 범위 밖을 따로 목록화한다</td></tr>
+          <tr><td>루프가 있으면 루프가 일한다</td><td>5회 모두 루프가 한 번도 돌지 않음</td><td>루프의 효과는 일부러 결함을 심은 입력으로 측정해야 안다</td></tr>
+          <tr><td>로컬에서 쌓이는 상태는 CI에서도 쌓인다</td><td>CI는 매번 빈 환경. git 제외 폴더의 상태는 사라짐</td><td>상태 파일마다 "어디에 영속하는가"를 설계 단계에서 표로 정한다</td></tr>
+          <tr><td>폴더 이름은 처음에 정하면 된다</td><td>의미 있는 이름은 Plan 뒤에야 생김</td><td>불변 ID와 표시 이름을 분리한다</td></tr>
+          <tr><td>자료 폴더는 그냥 넘기면 된다</td><td>자료 안에 키가 있었고, 키 이동 과정에서 다른 도구 로그로 새어 나감</td><td>자료 투입 경로에 비밀값 검사를 기본으로 두고, 키는 사람이 전용 경로로만 다룬다</td></tr>
+          <tr><td>브랜치에서 작업하고 PR로 합치면 된다</td><td>인증 규칙이 main에 묶여 브랜치에서 실행 불가</td><td>인증 범위와 개발 흐름(브랜치, PR, 비교 실행)을 함께 설계한다</td></tr>
+          <tr><td>에이전트는 지시받은 일을 다 할 수 있다</td><td>auto mode 분류기가 키 탐색과 키 출처 파일 커밋을 차단</td><td>사람이 해야 할 단계를 처음부터 워크플로에 표시한다</td></tr>
+          <tr><td>한 번씩 돌려 비교하면 차이를 안다</td><td>점수와 비용은 실행마다 흔들림</td><td>비교는 같은 조건 여러 회, 분포로 본다</td></tr>
+          <tr><td>기술 설명이 정확하면 전달된다</td><td>"브랜치, federation, subject" 설명에 사용자가 다시 설명을 요청</td><td>결정이 필요한 순간에는 결과와 선택지부터, 원리는 나중에</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>아직 모르는 것</h3>
+      <div class="cards">
+        <div class="card">
+          <h4>critic의 판별력</h4>
+          <p>critic이 결함을 실제로 잡는지, 잡는다면 어떤 종류를 놓치는지 모릅니다. 불합격이 0회인 이유가 품질인지 관대함인지 구분할 데이터가 없습니다.</p>
+        </div>
+        <div class="card">
+          <h4>같은 모델의 자기 평가 편향</h4>
+          <p>생성자와 critic이 같은 모델입니다. 다른 모델이나 결정적 검사로 교차 확인했을 때 결과가 달라지는지 측정하지 않았습니다.</p>
+        </div>
+        <div class="card">
+          <h4>어려운 아이디어에서의 동작</h4>
+          <p>지금까지는 3~6개 기능의 단순한 CRUD 앱이었습니다. 요구가 모호하거나 많을 때 intent 검증이 얼마나 도움이 되는지 모릅니다.</p>
+        </div>
+        <div class="card">
+          <h4>긴 실행과 토큰 갱신</h4>
+          <p>가장 긴 실행이 8.6분이었습니다. 10분 이상, 특히 개정 라운드가 여러 번 도는 긴 실행에서 인증 갱신이 버티는지 확인하지 않았습니다.</p>
+        </div>
+        <div class="card">
+          <h4>save-lessons의 실제 동작</h4>
+          <p>artifact 다운로드 버전 호환, 봇 push 권한, 병합 결과를 실제 실행으로 보지 않았습니다.</p>
+        </div>
+        <div class="card">
+          <h4>비용 추정의 정확도</h4>
+          <p>SDK가 계산한 클라이언트 측 추정치만 봤습니다. 실제 청구액과 대조하지 않았습니다.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 12 -->
+    <section id="next">
+      <h2>12. 다음 시스템 제안</h2>
+      <p>원칙은 하나입니다. 검증 루프를 더 쌓기 전에, 검증이 무엇을 놓치는지부터 측정할 수 있게 만듭니다. 아래 제안은 설계 방향이고, 특정 도구의 기능에 기대는 항목은 13절에 확인 방법과 함께 적었습니다.</p>
+
+      <div class="cards">
+        <div class="card">
+          <h4>1. 평가 체계 먼저</h4>
+          <ul>
+            <li>고정된 아이디어 세트(쉬움, 모호함, 외부 API, 모바일 중심)를 회귀 벤치마크로 둡니다.</li>
+            <li>결함을 일부러 심은 앱(버튼 화면 밖, 잘못된 정렬, 키 하드코딩)을 critic에 넣어 탐지율을 잽니다.</li>
+            <li>같은 조건 N회 실행으로 점수, 비용, 통과율의 분포를 봅니다.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h4>2. 결정적 검사를 넓히기</h4>
+          <ul>
+            <li>실제 브라우저로 여러 폭(예: 390px, 1280px)에서 스크린샷과 가로 넘침 검사를 합니다.</li>
+            <li>접근성 자동 검사, 콘솔 에러, 깨진 링크를 Stop gate에 넣습니다.</li>
+            <li>완료 기준을 먼저 실행 가능한 테스트로 만들고, 구현은 그 테스트를 통과하는 방향으로 진행합니다.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h4>3. critic을 독립적으로</h4>
+          <ul>
+            <li>스크린샷을 critic에게 이미지로 보여 줍니다.</li>
+            <li>생성자와 다른 모델이나 다른 프롬프트 계열로 교차 평가합니다.</li>
+            <li>합격 점수 대신 "검사 항목별 통과/실패 근거"를 필수 출력으로 합니다.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h4>4. 상태 설계를 처음에</h4>
+          <ul>
+            <li>모든 상태 파일에 대해 누가 쓰고, 어디에 영속하고, CI에서 어떻게 이어지는지 표를 먼저 만듭니다.</li>
+            <li>교훈 같은 공유 상태는 코드 브랜치와 분리합니다(전용 브랜치나 외부 저장소). git pull 마찰이 사라집니다.</li>
+            <li>minor라도 여러 실행에서 반복되면 교훈으로 승격하는 규칙을 둡니다.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h4>5. 실행 ID와 결과물 수명</h4>
+          <ul>
+            <li>폴더는 불변 실행 ID로 정하고, 앱 이름은 메타데이터로 둡니다. 실행 중 이름 변경이 필요 없습니다.</li>
+            <li>계속 다듬을 앱은 생성 직후 자기 저장소나 브랜치를 갖게 합니다.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h4>6. 비밀값 경로를 좁히기</h4>
+          <ul>
+            <li>자료 투입, 로그 기록, artifact 업로드 세 지점 모두에 비밀값 검사와 마스킹을 둡니다.</li>
+            <li>키는 사람이 전용 명령으로만 등록하고, 에이전트는 이름만 압니다. 이번처럼 범용 도구에 키 이동을 맡기지 않습니다.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h4>7. 인증과 개발 흐름을 함께</h4>
+          <ul>
+            <li>실험 브랜치용 federation 규칙을 따로 두면 PR 기반 비교 실행이 가능합니다. 범위는 좁게 잡습니다.</li>
+            <li>버전 비교는 같은 입력을 두 커밋에서 동시에 돌리는 전용 워크플로로 만듭니다.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h4>8. 관찰 가능성</h4>
+          <ul>
+            <li>단계별 비용, 턴 수, 도구 호출, gate 결과를 한 곳에 모아 실행 간 비교 대시보드를 만듭니다.</li>
+            <li>프롬프트와 루브릭에 버전을 붙여 결과와 함께 기록합니다.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h4>9. 사람과의 접점</h4>
+          <ul>
+            <li>사람만 할 수 있는 단계(키 등록, 비용 승인, 화면 확인)를 워크플로에 명시적 체크포인트로 둡니다.</li>
+            <li>보고는 결론과 선택지부터, 근거는 그 아래에 둡니다.</li>
+          </ul>
+        </div>
+      </div>
+
+      <h3>우선순위</h3>
+      <div class="table-wrap"><table>
+        <thead><tr><th>순서</th><th>할 일</th><th>이유</th></tr></thead>
+        <tbody>
+          <tr><td class="num">1</td><td>결함을 심은 입력으로 critic과 gate의 탐지율 측정</td><td>루프가 일하는지 모르는 채로는 다른 개선의 효과도 측정할 수 없음</td></tr>
+          <tr><td class="num">2</td><td>브라우저 기반 화면 검사를 Stop gate에 추가</td><td>이번에 실제로 놓친 결함의 종류</td></tr>
+          <tr><td class="num">3</td><td>상태 영속 표 작성, lessons를 코드 브랜치에서 분리</td><td>CI 초기화와 git pull 마찰을 함께 해결</td></tr>
+          <tr><td class="num">4</td><td>실행 ID와 표시 이름 분리, 결과물 저장소 분리</td><td>이름 변경 복잡도 제거, 앱 유지보수 가능</td></tr>
+          <tr><td class="num">5</td><td>비밀값 검사를 로그와 artifact까지 확장</td><td>이번 키 노출 경로를 막음</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <!-- 13 -->
+    <section id="unverified">
+      <h2>13. 미확인 항목과 확인 방법</h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>항목</th><th>확인 방법</th></tr></thead>
+        <tbody>
+          <tr><td><code>save-lessons</code> 잡 동작, <code>download-artifact@v8.0.1</code>와 업로드 v7 호환</td><td>다음 Actions 실행 뒤 잡 로그와 main 커밋 확인</td></tr>
+          <tr><td>10분 이상 실행 시 인증 갱신</td><td>기능이 많은 아이디어를 effort high로 실행하고 로그의 갱신 기록 확인</td></tr>
+          <tr><td>critic 불합격 후 개정, Stop hook block의 실제 동작</td><td>결함을 심은 입력이나 일부러 어려운 smoke 조건으로 실행</td></tr>
+          <tr><td>MMCA 새로고침 경로</td><td>로컬에서 <code>MMCA_SERVICE_KEY</code>를 넣고 앱의 새로고침 실행</td></tr>
+          <tr><td><code>secrets/mvp.env</code>의 기존 키 유실 여부</td><td>사용자가 파일을 직접 열어 확인 (에이전트는 키 파일을 읽지 않음)</td></tr>
+          <tr><td>federation 규칙의 <code>subject_prefix</code>가 접두사 매칭인지</td><td>Console 규칙 화면이나 Workload Identity 공식 문서</td></tr>
+          <tr><td>Agent SDK의 구조화 출력, 이미지 입력 등 12절 제안에 필요한 기능 지원 범위</td><td>Agent SDK 공식 문서에서 해당 옵션 확인 후 설계</td></tr>
+          <tr><td>비용 추정과 실제 청구액 차이</td><td>Console 사용량 화면과 run_report 대조</td></tr>
+          <tr><td><code>workspace/</code>를 git에서 제외한 원래 의도</td><td>기록 없음. 추정(생성물, 용량, 로그의 민감성)만 있음</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <!-- 14 -->
+    <section id="appendix">
+      <h2>14. 부록: 커밋</h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>시각</th><th>커밋</th><th>내용</th></tr></thead>
+        <tbody>
+          <tr><td class="num">10-12 14:12</td><td class="mono">1335886</td><td>mvpgen 최초 구현</td></tr>
+          <tr><td class="num">10-12 15:36</td><td class="mono">6271342</td><td>워크플로 runner 컨텍스트 수정</td></tr>
+          <tr><td class="num">10-12 15:38</td><td class="mono">ebb6563</td><td>API 오류 시 즉시 중단</td></tr>
+          <tr><td class="num">10-12 15:45</td><td class="mono">bf71bdb</td><td>export PORT 실행 안내</td></tr>
+          <tr><td class="num">10-12 15:50</td><td class="mono">5f66ffa</td><td>docs/ARCHIVE.md</td></tr>
+          <tr><td class="num">10-12 15:52</td><td class="mono">5094fa7</td><td>README 빠른 사용법</td></tr>
+          <tr><td class="num">10-13 11:49</td><td class="mono">7f1a5bd</td><td>Plan 의도 검증, 폴더 이름 변경, README 리뷰 반영</td></tr>
+          <tr><td class="num">10-13 12:31</td><td class="mono">df0367c</td><td>--context 참고 자료</td></tr>
+          <tr><td class="num">10-13 12:51</td><td class="mono">e2c241e</td><td>참고 자료 contexts/today-exhibitions</td></tr>
+          <tr><td class="num">10-13 13:32</td><td class="mono">6ca8790</td><td>lessons.md 저장소 보관, save-lessons 잡</td></tr>
+          <tr><td class="num">10-13 13:48</td><td class="mono">82cedd3</td><td>1차 구축 마무리 기록</td></tr>
+        </tbody>
+      </table></div>
+      <p class="lead">관련 문서: 저장소의 <code>docs/ARCHIVE.md</code>, 설계 흐름도 <a href="https://claude.ai/artifact/WWz5kH2FVB4jys226Ec5Aj">claude.ai/artifact/WWz5kH2FVB4jys226Ec5Aj</a>, 작업 경과 <a href="https://claude.ai/artifact/Vt8APEJ4mctzfpc6531E8n">claude.ai/artifact/Vt8APEJ4mctzfpc6531E8n</a></p>
+    </section>
+  </main>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script>mermaid.initialize({ startOnLoad: true, theme: window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "default" });</script>
+</body>
+</html>
