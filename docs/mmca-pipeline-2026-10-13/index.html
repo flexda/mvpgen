@@ -1,0 +1,359 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>MMCA 수집 작업 기록</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Noto+Serif+KR:wght@600;700&display=swap">
+<style>
+/* 레이아웃: 한 열 작업 기록. 왼쪽에 날짜·단계 표식, 본문은 65자 폭, 표만 넓게 */
+:root {
+  --bg: #f6f7f5;
+  --surface: #ffffff;
+  --fg: #1d2421;
+  --muted: #5d6863;
+  --line: #d9dfdb;
+  --accent: #1f5f5b;
+  --accent-soft: #e3efed;
+  --warn: #8a5a00;
+  --warn-soft: #fbf1dc;
+  --code-bg: #eef1ee;
+  --font-display: "Noto Serif KR", "Apple SD Gothic Neo", serif;
+  --font-body: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #131816; --surface: #1a201e; --fg: #e4ebe7; --muted: #9aa8a1; --line: #2e3734;
+    --accent: #7cc4bc; --accent-soft: #1e3532; --warn: #e2b45c; --warn-soft: #33291a; --code-bg: #222a27;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #131816; --surface: #1a201e; --fg: #e4ebe7; --muted: #9aa8a1; --line: #2e3734;
+  --accent: #7cc4bc; --accent-soft: #1e3532; --warn: #e2b45c; --warn-soft: #33291a; --code-bg: #222a27;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--fg);
+  font-family: var(--font-body); font-size: 15px; line-height: 1.7;
+  padding-inline: 16px; padding-block: 40px 72px;
+}
+.wrap { max-width: 860px; margin: 0 auto; display: grid; gap: 48px; }
+header { display: grid; gap: 10px; }
+.eyebrow { font-family: var(--font-mono); font-size: 12px; letter-spacing: .06em; color: var(--muted); text-transform: uppercase; }
+h1 { font-family: var(--font-display); font-size: clamp(26px, 5vw, 36px); line-height: 1.3; margin: 0; text-wrap: balance; }
+.lede { color: var(--muted); max-width: 65ch; margin: 0; }
+h2 { font-family: var(--font-display); font-size: 21px; margin: 0; text-wrap: balance; display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+h2 .step { font-family: var(--font-mono); font-size: 12px; font-weight: 500; color: var(--accent); background: var(--accent-soft); padding: 2px 8px; border-radius: 4px; letter-spacing: .04em; }
+h3 { font-size: 15px; font-weight: 600; margin: 0; }
+section { display: grid; gap: 16px; min-width: 0; }
+p, ul, ol { margin: 0; max-width: 68ch; }
+ul, ol { padding-left: 1.2em; display: grid; gap: 4px; }
+code { font-family: var(--font-mono); font-size: .88em; background: var(--code-bg); padding: 1px 5px; border-radius: 3px; overflow-wrap: anywhere; }
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--line); }
+th { font-weight: 600; color: var(--muted); font-size: 12.5px; letter-spacing: .02em; background: var(--bg); white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.mono { font-family: var(--font-mono); font-size: 12.5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.stat { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px; display: grid; gap: 2px; }
+.stat b { font-family: var(--font-mono); font-size: 22px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.stat span { color: var(--muted); font-size: 13px; }
+.note { border-left: 3px solid var(--warn); background: var(--warn-soft); padding: 12px 14px; border-radius: 0 6px 6px 0; display: grid; gap: 6px; max-width: 68ch; }
+.note h3 { color: var(--warn); }
+.decision { border-left: 3px solid var(--accent); background: var(--accent-soft); padding: 12px 14px; border-radius: 0 6px 6px 0; display: grid; gap: 6px; max-width: 68ch; }
+.tag { font-family: var(--font-mono); font-size: 11.5px; padding: 1px 7px; border-radius: 10px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.tag.ok { color: var(--accent); border-color: var(--accent); }
+.tag.open { color: var(--warn); border-color: var(--warn); }
+pre.mermaid { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 16px; overflow-x: auto; margin: 0; }
+.schema { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.layer { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px; display: grid; gap: 8px; align-content: start; min-width: 0; }
+.layer h3 { font-family: var(--font-mono); font-weight: 500; color: var(--accent); }
+.layer p { color: var(--muted); font-size: 13.5px; }
+.layer ul { font-family: var(--font-mono); font-size: 12.5px; padding-left: 1em; }
+details { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 10px 14px; }
+details summary { cursor: pointer; font-weight: 600; }
+details[open] summary { margin-bottom: 10px; }
+a { color: var(--accent); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+footer { color: var(--muted); font-size: 13px; border-top: 1px solid var(--line); padding-top: 16px; }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">오늘 뭐하지 · 데이터 수집 · 2026-10-13</div>
+  <h1>MMCA 전시정보 수집 작업 기록</h1>
+  <p class="lede">CSV로만 시험하던 국립현대미술관(MMCA) 데이터를 실제 API로 받아 정제하고 앱에 보여 주기까지의 과정, 그리고 정기 수집을 Supabase에 적재하는 방안에 대한 논의를 순서대로 정리했다.</p>
+</header>
+
+<section>
+  <h2>요약</h2>
+  <div class="stats">
+    <div class="stat"><b>3,980</b><span>API 전체 레코드</span></div>
+    <div class="stat"><b>26</b><span>정제 후 저장한 전시</span></div>
+    <div class="stat"><b>40회</b><span>1회 수집당 API 호출</span></div>
+    <div class="stat"><b>8.1초</b><span>1회 수집 시간</span></div>
+    <div class="stat"><b>10.6KB</b><span>저장된 캐시 크기</span></div>
+  </div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>항목</th><th>상태</th><th>내용</th></tr></thead>
+    <tbody>
+      <tr><td>API 수집</td><td><span class="tag ok">완료</span></td><td>실제 키로 3,980건 전부 수신 확인</td></tr>
+      <tr><td>정제 규칙</td><td><span class="tag ok">완료</span></td><td>날짜 필터, 중복 합치기, 테스트 레코드 제외, HTML 태그 제거</td></tr>
+      <tr><td>앱 반영</td><td><span class="tag ok">완료</span></td><td>"MMCA 새로고침" 버튼이 새 규칙으로 동작. 테스트 29개 통과</td></tr>
+      <tr><td>정기 수집</td><td><span class="tag open">논의 중</span></td><td>Mac은 쓰지 않음. GitHub Actions + Supabase 방향</td></tr>
+      <tr><td>Supabase 스키마</td><td><span class="tag open">초안</span></td><td>raw / core / mart 3층 구조. 원본 보관 방식 미정</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section>
+  <h2><span class="step">1단계</span>출발점</h2>
+  <p>mvpgen이 만든 "오늘 뭐하지" 앱(FastAPI + Jinja2)은 화랑 전시는 CSV에서, MMCA 전시는 <code>app/mmca.py</code>로 API를 불러 <code>data/mmca_cache.json</code>에 저장해 읽는다. 다만 MMCA 부분은 실제 키로 한 번도 돌려 보지 않은 상태였다.</p>
+  <ul>
+    <li>엔드포인트: <code>https://api.kcisa.kr/openapi/service/rest/moca/docMeta</code> (문화데이터광장)</li>
+    <li>키: <code>secrets/mvp.env</code>의 <code>MMCA_SERVICE_KEY</code>. 모든 실행에서 키 값은 출력하지 않았다.</li>
+    <li>기존 코드: 100건씩 최대 10페이지, 즉 최대 1,000건만 받도록 되어 있었다.</li>
+  </ul>
+</section>
+
+<section>
+  <h2><span class="step">2단계</span>실제 API 첫 호출</h2>
+  <p>3건만 요청해 응답 구조를 확인했다. HTTP 200, <code>resultCode 0000</code>, XML로 응답했다. 여기서 <code>totalCount</code>가 3,980건이라는 것을 확인했다. 기존 코드는 이 중 1,000건만 받는다.</p>
+  <p>이어서 앱의 <code>fetch_all</code>을 그대로 실행한 결과와 페이지 제한 없이 전부 받은 결과를 비교했다.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th></th><th class="num">건수</th><th class="num">시간</th><th class="num">오늘 진행 중</th></tr></thead>
+    <tbody>
+      <tr><td>기존 앱 (10페이지 제한)</td><td class="num">1,000</td><td class="num">2.1초</td><td class="num">54</td></tr>
+      <tr><td>전체</td><td class="num">3,980</td><td class="num">6.5초</td><td class="num">54</td></tr>
+    </tbody>
+  </table></div>
+  <p>이번에는 진행 중 전시가 모두 앞쪽 1,000건 안에 있었지만, 응답이 날짜순이 아니어서 2026년 전시가 레코드 600번대에도 있었다. 페이지별 최대 종료일을 보면 1페이지는 2028년, 7페이지에서 다시 2026년이 나온다. 앞 몇 페이지만 받고 멈추는 방식은 안전하지 않다.</p>
+</section>
+
+<section>
+  <h2><span class="step">3단계</span>날짜 필터 파라미터가 있는가</h2>
+  <p>공식 문서(문화데이터광장 openapiView id=44)를 확인했다. 요청 파라미터는 다음 세 개뿐이다.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>파라미터</th><th>필수</th><th>설명</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">serviceKey</td><td>필수</td><td>서비스 인증키</td></tr>
+      <tr><td class="mono">numOfRows</td><td>선택</td><td>페이지당 레코드 수</td></tr>
+      <tr><td class="mono">pageNo</td><td>선택</td><td>페이지 번호</td></tr>
+    </tbody>
+  </table></div>
+  <div class="decision">
+    <h3>결론</h3>
+    <p>날짜·분류·장소로 거르는 파라미터는 없다. 문서에 없는 파라미터는 시험하지 않았다. 전부 받은 뒤 우리 쪽에서 걸러야 한다.</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="step">4단계</span>1페이지 100건 살펴보기</h2>
+  <p>규칙을 정하기 전에 <code>numOfRows=100</code>으로 한 번 호출해 데이터를 직접 살폈다.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>관찰</th><th>예시</th><th>대응</th></tr></thead>
+    <tbody>
+      <tr><td>subjectCategory가 맞지 않음</td><td>같은 전시에 과거·현재·예정 세 값이 모두 붙음. 2025년에 끝난 "테스트"가 현재전시로 표시됨</td><td>쓰지 않고 eventPeriod로 계산</td></tr>
+      <tr><td>같은 전시가 2~4번 중복</td><td>"수련과 샹들리에" 4건</td><td>중복 합치기</td></tr>
+      <tr><td>중복인데 제목이 조금씩 다름</td><td>"데미안 허스트" / "데이미언 허스트", "이대원" / "이대원: 당신을…"</td><td>장소+기간으로 묶고 가장 긴 제목 사용</td></tr>
+      <tr><td>같은 전시인데 기간이 다름</td><td>"그래도 해보던 날들" 2026-08-30 / 2027-02-28 종료</td><td>종료일이 가장 늦은 것만 남김</td></tr>
+      <tr><td>테스트 레코드</td><td>제목이 "테스트"</td><td>제외</td></tr>
+      <tr><td>요금 표기가 제각각</td><td><code>0</code>, <code>무료</code>, <code>-</code>, 빈 값, <code>미정</code>, 문장</td><td>합칠 때 비어 있지 않은 값을 우선 사용. 정규화는 아직 안 함</td></tr>
+      <tr><td>필요 없는 필드</td><td>creator·publisher·collectionDb는 모든 레코드가 같은 값, subDescription은 전부 빈 값</td><td>저장하지 않음</td></tr>
+      <tr><td>장소는 관 이름만 있음</td><td>서울·과천·청주·덕수궁·레지던시·해외·어린이미술관</td><td>장소 필터 없이 전부 수집</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section>
+  <h2><span class="step">5단계</span>정제 규칙과 코드 변경</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>규칙</th><th>내용</th></tr></thead>
+    <tbody>
+      <tr><td>날짜</td><td>종료일이 2026-08-01 이후인 전시. 8월 이후에 한 번이라도 열려 있던 전시가 남는다. 환경변수 <code>MMCA_SINCE</code>로 기준일을 바꿀 수 있다</td></tr>
+      <tr><td>장소</td><td>거르지 않는다</td></tr>
+      <tr><td>1차 중복 합치기</td><td>(장소, 시작일, 종료일)이 같으면 하나로 합친다. 제목은 가장 긴 것, 요금·참여자는 비어 있지 않은 첫 값</td></tr>
+      <tr><td>2차 중복 합치기</td><td>합친 뒤에도 장소와 제목이 같으면 종료일이 가장 늦은 것만 남긴다</td></tr>
+      <tr><td>HTML 태그</td><td>모든 값에서 <code>&lt;br/&gt;</code> 같은 태그를 지우고 공백을 정리한다</td></tr>
+      <tr><td>제외</td><td>제목이 정확히 "테스트"인 레코드</td></tr>
+      <tr><td>기간 해석 불가</td><td>버리지 않고 남겨 /review 화면에 보이게 한다</td></tr>
+    </tbody>
+  </table></div>
+  <h3>바뀐 파일</h3>
+  <ul>
+    <li><code>app/mmca.py</code>: <code>totalCount</code>를 채우면 멈추고, 페이지 상한은 100으로 올렸다. <code>clean_text</code>, <code>select_recent</code>를 새로 만들었다.</li>
+    <li><code>app/main.py</code>: 새로고침이 받기 → 거르기 → 저장 순서로 돈다. "전체 N건 중 M건 저장" 메시지를 보여 준다.</li>
+    <li>테스트: 단위 테스트 5개 추가(경계일, 표기가 다른 중복, 테스트 레코드, 같은 제목 다른 기간, HTML 태그). AC3의 호출 횟수 기대값을 1회로 수정. 총 29개 통과.</li>
+  </ul>
+  <div class="note">
+    <h3>버전 관리 안 됨</h3>
+    <p>앱은 git에서 제외된 <code>workspace/</code> 아래에 있어서 이 변경은 커밋되지 않았다.</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="step">6단계</span>실제 수집 결과</h2>
+  <p>실제 키로 앱의 새로고침을 실행했다. 3,980건을 받아 28건으로 줄었고, 2차 중복 합치기와 HTML 태그 제거를 넣은 뒤 26건이 됐다. 이 중 오늘(10-13) 진행 중인 18건이 앱 화면에 마감 임박 순으로 나온다.</p>
+  <details>
+    <summary>저장된 26건 보기 (종료일 순)</summary>
+    <div class="table-wrap"><table>
+      <thead><tr><th>장소</th><th>기간</th><th>제목</th></tr></thead>
+      <tbody>
+        <tr><td>서울</td><td class="mono">2026-07-24~2026-08-02</td><td>장 클로드 루소: 2026 서울국제실험영화페스티벌 엑스레트로</td></tr>
+        <tr><td>청주</td><td class="mono">2026-04-24~2026-09-27</td><td>방혜자 - 천지에 마음의 빛 뿌리며 간다</td></tr>
+        <tr><td>과천</td><td class="mono">2026-05-14~2026-09-27</td><td>로드 무비: 1945년 이후 한·일 미술</td></tr>
+        <tr><td>서울</td><td class="mono">2026-06-19~2026-10-11</td><td>이것은 개념미술이 (아니)다</td></tr>
+        <tr><td>서울</td><td class="mono">2026-08-15~2026-10-25</td><td>사각사각 소곤소곤</td></tr>
+        <tr><td>덕수궁</td><td class="mono">2026-08-06~2026-11-08</td><td>이대원: 당신을 슬프게 하는 것은 하나도 없다</td></tr>
+        <tr><td>서울</td><td class="mono">2026-07-31~2026-11-29</td><td>MMCA×LG OLED 시리즈 2026</td></tr>
+        <tr><td>서울</td><td class="mono">2026-04-01~2026-12-06</td><td>MMCA 다원예술 2026: 탐정의 시간</td></tr>
+        <tr><td>서울</td><td class="mono">2026-07-24~2026-12-06</td><td>올해의 작가상 2026</td></tr>
+        <tr><td>서울</td><td class="mono">2026-04-20~2026-12-20</td><td>MMCA 필름앤비디오 2026</td></tr>
+        <tr><td>청주</td><td class="mono">2025-07-22~2026-12-31</td><td>특별수장고: 국립현대미술관 드로잉·일본 현대 판화 소장품</td></tr>
+        <tr><td>청주</td><td class="mono">2020-12-03~2026-12-31</td><td>개방 수장고 개편</td></tr>
+        <tr><td>과천</td><td class="mono">2025-10-02~2027-01-03</td><td>MMCA 해외 명작 : 수련과 샹들리에</td></tr>
+        <tr><td>서울</td><td class="mono">2026-08-27~2027-02-09</td><td>서도호</td></tr>
+        <tr><td>어린이미술관</td><td class="mono">2026-04-30~2027-02-21</td><td>오~감각미술관</td></tr>
+        <tr><td>서울</td><td class="mono">2026-04-17~2027-02-28</td><td>그래도 해보던 날들</td></tr>
+        <tr><td>과천</td><td class="mono">2026-11-12~2027-03-31</td><td>조지아 오키프와 미국 모더니즘</td></tr>
+        <tr><td>서울</td><td class="mono">2026-11-20~2027-04-04</td><td>읽기의 기술: 종이에서 픽셀로</td></tr>
+        <tr><td>덕수궁</td><td class="mono">2026-12-17~2027-05-09</td><td>파리의 이방인</td></tr>
+        <tr><td>과천</td><td class="mono">2027-02-18~2027-06-27</td><td>박석원</td></tr>
+        <tr><td>과천</td><td class="mono">2026-04-22~2027-06-27</td><td>MMCA 과천 상설전 «한국근현대미술 II»</td></tr>
+        <tr><td>과천</td><td class="mono">2025-06-26~2027-06-27</td><td>MMCA 과천 상설전 «한국근현대미술 II» (임시 휴관)</td></tr>
+        <tr><td>과천</td><td class="mono">2025-05-01~2027-06-27</td><td>MMCA 상설전 «한국미술 1900-1960»</td></tr>
+        <tr><td>청주</td><td class="mono">2025-08-08~2027-07-31</td><td>미술은행 20주년 특별전 «돌아온 미래: 형태와 생각의 발현»</td></tr>
+        <tr><td>과천</td><td class="mono">2026-07-10~2027-10-31</td><td>과천관 40주년 프로젝트: 빛의 상상들</td></tr>
+        <tr><td>청주</td><td class="mono">2026-09-22~2028-12-31</td><td>개방 수장고: 국립현대미술관 소장품</td></tr>
+      </tbody>
+    </table></div>
+  </details>
+  <div class="note">
+    <h3>남은 문제</h3>
+    <p>과천 "한국근현대미술 II"가 두 줄로 남는다. 한쪽 제목에만 "(임시 휴관)"이 붙어 있어 제목이 같지 않기 때문이다. 괄호를 빼고 비교하면 합칠 수 있지만, 괄호로만 구분되는 다른 전시까지 합칠 위험이 있어 그대로 두었다. 요금 표기도 아직 정규화하지 않았다.</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="step">7단계</span>정기 수집 방법</h2>
+  <p>서버가 켜져 있어도 수집은 버튼을 눌러야만 일어난다. 서버를 끄면 화면만 볼 수 없고 캐시 파일은 남는다. 정기 수집은 서버와 따로, 정해진 시각에 수집 코드를 실행해야 한다.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>방법</th><th>실행 위치</th><th>특징</th></tr></thead>
+    <tbody>
+      <tr><td>launchd</td><td>Mac</td><td>예약 시각에 Mac이 잠자고 있었으면 깨어날 때 실행 (<code>man launchd.plist</code>로 확인)</td></tr>
+      <tr><td>cron</td><td>Mac</td><td>예약 시각에 Mac이 잠자고 있으면 그 회차를 건너뜀</td></tr>
+      <tr><td>앱 안 스케줄러</td><td>서버</td><td>서버가 꺼지면 수집도 멈춤</td></tr>
+      <tr><td>GitHub Actions</td><td>GitHub</td><td>Mac이 필요 없음. 기본 브랜치에서만 돌고, 부하가 높을 때 늦어질 수 있음</td></tr>
+    </tbody>
+  </table></div>
+  <div class="decision">
+    <h3>결정</h3>
+    <p>Mac은 쓰지 않는다. API 수집과 정제는 스크립트로, 화랑 정보는 크롤링으로 하고, 예약 실행은 GitHub Actions로 한다.</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="step">8단계</span>적재 위치: Supabase</h2>
+  <p>처음에는 데이터가 작아서 결과 파일을 GitHub 저장소에 커밋하는 방식을 권했다. 그런데 목표는 확장 가능한 구조를 만들면서 작은 데이터로 Supabase 스키마 같은 데이터 엔지니어링을 공부하는 것이다. 그래서 Supabase에 적재하기로 했다.</p>
+
+  <h3>전체 흐름</h3>
+  <pre class="mermaid">
+flowchart LR
+  A[GitHub Actions 예약 실행] --> B[collect_mmca.py]
+  A --> C[crawl_galleries.py]
+  B --> R1[(raw.mmca_snapshot)]
+  C --> R2[(raw.gallery_extract)]
+  R1 --> K[(core.exhibitions / core.venues / core.quality_issues)]
+  R2 --> K
+  K --> M[mart.v_exhibitions_on]
+  M --> APP[앱]
+  </pre>
+
+  <h3>확인한 Supabase 사실</h3>
+  <div class="table-wrap"><table>
+    <thead><tr><th>항목</th><th>내용</th><th>영향</th></tr></thead>
+    <tbody>
+      <tr><td>Free 플랜 용량</td><td>프로젝트당 DB 500MB, 활성 프로젝트 2개</td><td>원본 보관 방식을 정해야 함</td></tr>
+      <tr><td>비활성 일시정지</td><td>"Free projects are paused after 1 week of inactivity"</td><td>DB 쓰기가 활동으로 인정되는지는 미확인. 첫 주 뒤 대시보드에서 확인</td></tr>
+      <tr><td>자동 백업</td><td>Free 플랜에는 없음</td><td>스키마를 SQL 마이그레이션 파일로 git에 보관</td></tr>
+      <tr><td>접속 방식</td><td>Free 플랜의 직접 연결은 IPv6 전용. Session pooler(5432)는 IPv4</td><td>Actions에서는 Session pooler로 접속 (러너가 IPv4 전용이라는 것은 추론)</td></tr>
+      <tr><td>스키마 노출</td><td>기본은 <code>public</code>만 Data API에 노출</td><td><code>mart</code>를 앱에서 직접 읽으려면 Exposed schemas 추가와 GRANT 필요</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>스키마 초안</h3>
+  <div class="schema">
+    <div class="layer">
+      <h3>raw</h3>
+      <p>받은 그대로 쌓기만 한다. 수정하지 않는다.</p>
+      <ul>
+        <li>ingest_runs (run_id, source, started_at, finished_at, status, api_total_count, row_count, error)</li>
+        <li>mmca_snapshot (run_id, payload_hash, payload jsonb)</li>
+        <li>gallery_extract (run_id, gallery_id, source_url, payload jsonb, needs_review)</li>
+      </ul>
+    </div>
+    <div class="layer">
+      <h3>core</h3>
+      <p>정제된 층. 오늘 만든 규칙이 여기로 옮겨 온다.</p>
+      <ul>
+        <li>venues (venue_id, source, name, branch, region)</li>
+        <li>exhibitions (exhibition_id, source_key, title, venue_id, start_date, end_date, charge_raw, is_free, artists text[], first_seen_at, last_seen_at)</li>
+        <li>quality_issues (run_id, source, record_ref, rule, detail)</li>
+      </ul>
+    </div>
+    <div class="layer">
+      <h3>mart</h3>
+      <p>서비스용 조회. 앱은 이 층만 읽는다.</p>
+      <ul>
+        <li>v_exhibitions_on(date)</li>
+        <li>v_new_this_week</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>이 구조로 공부할 것</h3>
+  <div class="table-wrap"><table>
+    <thead><tr><th>주제</th><th>내용</th></tr></thead>
+    <tbody>
+      <tr><td>멱등성</td><td>같은 날 두 번 돌려도 결과가 같아야 한다. core는 source_key로 upsert(ON CONFLICT)</td></tr>
+      <tr><td>변경 이력</td><td>first_seen_at, last_seen_at으로 전시가 언제 처음 나타나고 언제 사라졌는지 추적</td></tr>
+      <tr><td>원본 보관 정책</td><td>3,980건 원본은 하루 약 1MB(JSON 기준). 매일 다 쌓으면 1년 안에 500MB에 닿을 수 있다</td></tr>
+      <tr><td>데이터 품질</td><td>규칙 위반을 버리지 않고 quality_issues에 남겨 측정</td></tr>
+      <tr><td>스키마 변경 관리</td><td>migrations/*.sql을 git에 두고, 바꿀 때마다 파일을 하나씩 추가</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section>
+  <h2>다음 할 일과 미정 사항</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>항목</th><th>담당</th><th>내용</th></tr></thead>
+    <tbody>
+      <tr><td>원본 보관 방식 결정</td><td>사용자</td><td>전날과 같으면(payload_hash) 저장 생략, 또는 30일만 보관</td></tr>
+      <tr><td>Supabase 프로젝트 생성</td><td>사용자</td><td>계정과 프로젝트 생성, Session pooler 접속 문자열을 GitHub Secrets(예: <code>SUPABASE_DB_URL</code>)에 등록</td></tr>
+      <tr><td>MMCA 하루 호출 한도</td><td>사용자</td><td>미확인. 문화데이터광장 마이페이지의 인증키 신청 내역에서 확인</td></tr>
+      <tr><td>Actions 무료 사용 시간</td><td>사용자</td><td>미확인. 비공개 저장소라 GitHub Billing 설정에서 월 한도 확인</td></tr>
+      <tr><td>데이터 전용 저장소</td><td>Claude</td><td><code>migrations/001_init.sql</code>과 MMCA 수집 스크립트부터 작성</td></tr>
+      <tr><td>화랑 크롤링 이전</td><td>Claude</td><td>MMCA 다음 단계. GitHub 서버 IP에서 화랑 사이트가 차단하는지는 첫 실행 로그로 확인</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<footer>작성 2026-10-13. 근거: 실제 API 호출 결과, 문화데이터광장 API 문서(id=44), Supabase 공식 문서와 가격 페이지, GitHub Actions 공식 문서, macOS launchd.plist 매뉴얼.</footer>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script>mermaid.initialize({ startOnLoad: true, theme: window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "default" });</script>
+</body>
+</html>
