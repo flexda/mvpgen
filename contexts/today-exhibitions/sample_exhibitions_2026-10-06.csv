@@ -1,0 +1,22 @@
+gallery_id,gallery,branch,title,artists,start_date,end_date,source_url,fetched_at,needs_review
+kukje,국제갤러리,K1·K3·한옥,Changing Unchanging 변하는 변하지 않는,Park Seo-Bo,2026-08-24,2026-10-18,https://www.kukjegallery.com/exhibitions/current,2026-10-06,
+kukje,국제갤러리,K2,Pictos and Pitwall 핏월과 픽토,Seeun Kim,2026-08-24,2026-10-18,https://www.kukjegallery.com/exhibitions/current,2026-10-06,
+hyundai,갤러리현대,,Moon Mind 달 마음,Christine Sun Kim,2026-08-26,2026-10-18,https://www.galleryhyundai.com/,2026-10-06,
+hyundai,갤러리현대,,Towards: There Was Light,Kim Bohie,2026-08-26,2026-10-18,https://www.galleryhyundai.com/,2026-10-06,
+hyundai,갤러리현대,,Meditation: Myth and Memory,John Pai,2026-09-10,2026-11-28,https://www.galleryhyundai.com/,2026-10-06,
+pkm,PKM갤러리,,reimagine Yun Hyong-keun,,2026-08-26,2026-10-10,https://www.pkmgallery.com/exhibitions/current,2026-10-06,참여작가 미표기
+pkm,PKM갤러리,Yun Hyong-keun House,Yun Hyong-keun House,Yun Hyong-keun,2026-02-04,2026-12-05,https://www.pkmgallery.com/exhibitions/current,2026-10-06,
+arario,아라리오갤러리,서울,잠자는 남자,김인배,,2026-10-24,https://k-artnow.com/ko/posts.php?co_id=1789631109,2026-10-06,시작일 미확인 / 갤러리 페이지는 지난 전시 표시
+ropac,타데우스 로팍,Seoul Fort Hill,,Georg Baselitz,2026-09-01,2026-11-14,https://ropac.net/exhibitions/current/,2026-10-06,전시명 미표기
+baton,갤러리바톤,,GRACE,,2026-09-01,2026-10-10,https://www.gallerybaton.com/exhibitions/,2026-10-06,참여작가 미표기
+esther_schipper,에스더 쉬퍼,Seoul,Who Lived Happily Ever After?,Simon Fujiwara,,,https://www.estherschipper.com/exhibitions/,2026-10-06,기간 미표기 → 상세페이지 확인
+pace,페이스갤러리,Seoul,The Nearest Faraway Place,Friedrich Kunath,2026-09-01,2026-10-24,https://www.pacegallery.com/exhibitions/?location=seoul,2026-10-06,
+whitecube,화이트큐브,서울,Míope 편린,Marina Rheingantz,2026-09-01,2026-10-24,https://www.whitecube.com/ko/gallery-exhibitions/marina-rheingantz-seoul-2026,2026-10-06,
+perrotin,페로탕,서울(도산파크),내일의 문턱에서,Mr.,2026-09-01,2026-10-24,https://www.artkoreatv.com/news/articleView.html?idxno=104076,2026-10-06,갤러리 페이지 미반영(캐시) → 언론 교차확인
+lehmann_maupin,리만머핀,서울,Irreparable Repairs: 되돌리지 않는 수리,Kader Attia,,2026-10-17,http://www.ftoday.co.kr/news/articleView.html?idxno=364450,2026-10-06,시작일 미확인
+p21,P21,,기도하는 사람들,양정욱,,2026-10-10,https://k-artnow.com/ko/posts.php?co_id=1789631109,2026-10-06,시작일 미확인
+tang,탕 컨템포러리,서울,,,2026-08-29,2026-10-10,https://www.tangcontemporary.com/,2026-10-06,제목·작가 매칭 불명확
+leeahn,리안갤러리,,,,,,,2026-10-06,수집 실패(HTTPS 미지원 - http로 재시도 필요)
+gana,가나아트,,,,,,,2026-10-06,수집 실패(EUC-KR 인코딩 감지 필요)
+koenig,쾨닉,,,,,,,2026-10-06,수집 실패(Shopify 정적 HTML 비어있음 - .atom 피드 시도 필요)
+gladstone,글래드스톤,,,,,,,2026-10-06,수집 실패(캐시 오래됨 - 직접 요청 후 날짜 검증 필요)
