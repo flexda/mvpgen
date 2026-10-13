@@ -12,6 +12,7 @@ from typing import Any
 
 from mvpgen import prompts
 from mvpgen.agents import AgentRun, run_agent
+from mvpgen.context import list_context
 from mvpgen.critic import RoundTracker, Review, check_review_file, is_accepted, load_review
 from mvpgen.gates import StopGate
 from mvpgen.lessons import lessons_prompt, record_lessons
@@ -231,7 +232,8 @@ class Pipeline:
                 stage=f"{stage}-critic",
                 round_no=round_no,
                 system_prompt=prompts.CRITIC_SYSTEM,
-                prompt=prompts.critic_prompt(stage, self.config.idea, rubric, review_rel, port),
+                prompt=prompts.critic_prompt(stage, self.config.idea, rubric, review_rel, port,
+                                          has_context=bool(list_context(self.run_dir))),
                 tools=critic_tools,
                 writable=[review_path],
                 max_turns=self.config.critic_max_turns,
@@ -284,7 +286,7 @@ class Pipeline:
             gate = StopGate("Plan", self._plan_check, self.config.max_gate_blocks)
             await self._agent(
                 stage="plan", round_no=round_no, system_prompt=system,
-                prompt=prompts.plan_prompt(self.config.idea, feedback),
+                prompt=prompts.plan_prompt(self.config.idea, feedback, list_context(self.run_dir)),
                 tools=GEN_TOOLS_PLAN, writable=writable, max_turns=self.config.plan_max_turns, gate=gate,
             )
 
@@ -306,7 +308,7 @@ class Pipeline:
             gate = StopGate("Build", self._build_check, self.config.max_gate_blocks)
             await self._agent(
                 stage="build", round_no=round_no, system_prompt=system,
-                prompt=prompts.build_prompt(spec, feedback),
+                prompt=prompts.build_prompt(spec, feedback, list_context(self.run_dir)),
                 tools=GEN_TOOLS_BUILD, writable=[self.app_dir], max_turns=self.config.build_max_turns, gate=gate,
             )
 

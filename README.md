@@ -75,6 +75,20 @@ uv run mvpgen --resume 20261012-153000-simple-memo   # 중단된 실행 이어�
 
 `--resume`에는 Plan 뒤에 바뀌기 전의 `-mvp` 이름을 줘도 바뀐 폴더를 찾아 이어 간다.
 
+### 참고 자료 넘기기 (`--context`)
+
+미리 조사한 자료(API 문서, 수집해 둔 CSV/JSON, 수집 스크립트)가 있으면 폴더째 넘긴다.
+
+```bash
+uv run mvpgen "오늘 뭐하지: 전시 정보를 모아 오늘 볼 만한 전시를 추천" --context contexts/today-exhibitions
+```
+
+- 폴더는 결과 폴더의 `context/`로 복사된다. Plan은 데이터 출처와 실제 필드를 기획에 반영하고, Build는 데이터 파일을 `app/` 안으로 복사해 쓴다. critic도 자료를 함께 본다.
+- 수집 스크립트는 참고용이다. 생성된 앱은 실행 중에 크롤링하지 않고 수집해 둔 파일을 쓴다.
+- API 키는 자료에 넣지 않는다. 값은 `secrets/mvp.env`(Actions는 Secret `MVP_ENV`)에 두고 자료에는 환경변수 이름만 적는다. 자료에 `mvp.env`의 값이 그대로 있으면 복사하지 않고 멈춘다.
+- 숨김 파일은 빼고, 전체 5MB까지 받는다.
+- Actions에서는 자료를 저장소에 커밋하고 `-f context=contexts/today-exhibitions`처럼 저장소 안 경로를 넘긴다.
+
 결과는 `workspace/<slug>/`에 생긴다.
 
 ```
@@ -129,4 +143,5 @@ API를 호출하지 않는다. `tests/test_pipeline_flow.py`는 SDK 호출을 �
 | `spec.py` | spec.json 스키마, Plan 검사 |
 | `critic.py` | review 스키마, 합격 판정, 스냅샷과 롤백 |
 | `lessons.py` | 실행 간 교훈 누적 |
+| `context.py` | 참고 자료 폴더 복사와 비밀값 검사 |
 | `prompts.py`, `rubrics.py` | 프롬프트와 루브릭 |

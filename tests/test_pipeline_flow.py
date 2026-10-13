@@ -108,6 +108,24 @@ async def test_fallback_folder_renamed_after_plan(tmp_path, monkeypatch):
     assert pipeline_mod.find_run_dir(tmp_path, "20261012-153000-mvp") == new_dir
 
 
+async def test_context_reaches_plan_build_and_critic_after_rename(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(pipeline_mod, "run_agent", make_fake_agent(calls))
+    run_dir = tmp_path / "20261013-090000-mvp"
+    (run_dir / "context").mkdir(parents=True)
+    (run_dir / "context" / "exhibitions.csv").write_text("title\nA\n")
+
+    pipe = Pipeline(RunConfig(idea="오늘 뭐하지", out_dir=tmp_path, budget_usd=5), run_dir)
+    assert await pipe.run() is True
+
+    # 이름이 바뀐 뒤 Build 단계에도 자료 목록이 전달되어야 한다
+    assert (pipe.run_dir / "context" / "exhibitions.csv").exists()
+    for stage in ("plan", "plan-critic", "build", "build-critic"):
+        prompt = next(p for s, p in calls if s == stage)
+        assert "context/" in prompt, stage
+    assert "context/exhibitions.csv" in next(p for s, p in calls if s == "build")
+
+
 async def test_idea_slug_ending_in_mvp_is_not_renamed(tmp_path, monkeypatch):
     monkeypatch.setattr(pipeline_mod, "run_agent", make_fake_agent([]))
     run_dir = tmp_path / "20261012-153000-todo-mvp"

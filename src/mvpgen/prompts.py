@@ -104,8 +104,31 @@ def env_note(keys: list[str]) -> str:
     )
 
 
-def plan_prompt(idea: str, feedback: str | None) -> str:
-    prompt = f"아이디어: {idea}\n\nPRD.md와 spec.json을 작성하라."
+def context_note(files: list[str], stage: str) -> str:
+    """사용자가 넘긴 참고 자료(context/)를 단계에 맞게 안내한다. 자료가 없으면 빈 문자열."""
+    if not files:
+        return ""
+    listing = "\n".join(f"- {f}" for f in files)
+    note = (
+        "\n\n# 참고 자료 (context/)\n"
+        "사용자가 이 아이디어를 위해 미리 조사한 자료다. 읽기만 하고 고치지 않는다.\n" + listing + "\n"
+    )
+    if stage == "plan":
+        note += (
+            "작성 전에 모두 읽어라. 데이터를 어디서 얻는지(공공 API, 수집해 둔 파일)를 PRD.md와 spec.json에 구체적으로 반영하고,\n"
+            "자료에 있는 실제 필드와 형식을 기준으로 기능과 완료 기준을 정한다. 자료에 없는 데이터 출처를 가정하지 않는다.\n"
+            "수집 스크립트(크롤러)는 참고용이다. MVP는 실행 중에 크롤링하지 않고, 수집해 둔 CSV/JSON을 앱 데이터로 쓴다."
+        )
+    elif stage == "build":
+        note += (
+            "spec이 이 자료의 데이터 파일을 쓰게 되어 있으면 app/ 안(예: app/data/)으로 복사해 쓴다. context/를 직접 참조하지 않는다.\n"
+            "실행 중에 크롤링하지 않는다. 공공 API 문서의 엔드포인트와 필드를 따르고, 키는 환경변수 이름으로만 읽는다."
+        )
+    return note
+
+
+def plan_prompt(idea: str, feedback: str | None, context_files: list[str] | None = None) -> str:
+    prompt = f"아이디어: {idea}\n\nPRD.md와 spec.json을 작성하라." + context_note(context_files or [], "plan")
     if feedback:
         prompt += (
             "\n\n이전 버전이 리뷰를 통과하지 못했다. 기존 파일을 읽고 아래 지적을 모두 반영해 두 파일을 고쳐라.\n\n"
@@ -114,11 +137,11 @@ def plan_prompt(idea: str, feedback: str | None) -> str:
     return prompt
 
 
-def build_prompt(spec: Spec, feedback: str | None) -> str:
+def build_prompt(spec: Spec, feedback: str | None, context_files: list[str] | None = None) -> str:
     prompt = (
         f"PRD.md와 spec.json을 읽고 '{spec.name}' MVP를 app/ 아래에 구현하라.\n"
         f"스택: {spec.stack}\n기능 {len(spec.features)}개, 완료 기준 {len(spec.acceptance_criteria)}개."
-    )
+    ) + context_note(context_files or [], "build")
     if feedback:
         prompt += (
             "\n\n이미 app/에 구현이 있다. 리뷰에서 아래 문제가 지적되었다. 모두 고치고, 관련 테스트를 보강하라.\n\n"
@@ -134,7 +157,9 @@ def fix_prompt(report: str) -> str:
     )
 
 
-def critic_prompt(stage: str, idea: str, rubric: str, review_path: str, port: int | None = None) -> str:
+def critic_prompt(
+    stage: str, idea: str, rubric: str, review_path: str, port: int | None = None, has_context: bool = False
+) -> str:
     target = (
         "PRD.md와 spec.json" if stage == "plan" else "spec.json의 기준에 비춘 app/ 구현"
     )
@@ -142,6 +167,12 @@ def critic_prompt(stage: str, idea: str, rubric: str, review_path: str, port: in
         f"원래 아이디어: {idea}\n\n평가 대상: {target}\n\n루브릭:\n{rubric}\n"
         f"평가 결과를 {review_path}에 작성하라."
     )
+    if has_context:
+        prompt += (
+            "\n\n사용자가 미리 조사한 참고 자료가 context/에 있다. 함께 읽고, 결과물이 자료의 데이터 출처와 실제 필드를 반영했는지,"
+            " 자료에 없는 데이터를 가정하지 않았는지, 실행 중 크롤링에 의존하지 않는지 확인하라."
+            " 자료를 무시해 아이디어의 핵심 데이터를 얻을 수 없으면 critical이다."
+        )
     if port is not None:
         prompt += (
             f"\n\n앱을 직접 실행해 기준을 하나씩 확인하라. PORT={port}로 실행하고(app/에서 spec.json의 run_cmd), "

@@ -28,6 +28,7 @@ def generate(
     pass_threshold: Annotated[int, typer.Option(help="critic 합격 점수")] = 80,
     resume: Annotated[str | None, typer.Option(help="이어서 실행할 결과 폴더 이름(slug)")] = None,
     secrets: Annotated[Path, typer.Option(help="claude.env, mvp.env가 있는 폴더")] = Path("secrets"),
+    context: Annotated[Path | None, typer.Option(help="미리 조사한 참고 자료 폴더. 결과 폴더의 context/로 복사해 Plan과 Build가 읽는다")] = None,
     gha_oidc: Annotated[bool, typer.Option(help="GitHub Actions에서 OIDC 토큰을 자동으로 받아 갱신")] = True,
     oidc_audience: Annotated[str, typer.Option(help="GitHub OIDC 토큰의 audience (federation 규칙과 같아야 함)")] = DEFAULT_AUDIENCE,
 ) -> None:
@@ -85,6 +86,14 @@ def generate(
 
     assert idea is not None
     run_dir.mkdir(parents=True, exist_ok=True)
+    if context is not None:
+        from mvpgen.context import ContextError, copy_context
+
+        try:
+            copied = copy_context(context.expanduser().resolve(), run_dir, list(mvp_env.values()))
+        except ContextError as e:
+            raise typer.BadParameter(str(e), param_hint="--context") from e
+        typer.echo(f"참고 자료: {context} -> {copied}")
     config = RunConfig(
         idea=idea, out_dir=out, model=model, effort=effort, budget_usd=budget,
         max_review_rounds=max_review_rounds, max_gate_blocks=max_gate_blocks,

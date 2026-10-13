@@ -33,6 +33,11 @@ on:
         default: "high"
         type: choice
         options: [low, medium, high, xhigh, max]
+      context:
+        description: "참고 자료 폴더 (저장소 안 경로, 예: contexts/today-exhibitions). 비우면 쓰지 않는다"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   id-token: write   # GitHub OIDC 토큰 발급에 필요
@@ -79,11 +84,14 @@ jobs:
           IDEA: ${{ inputs.idea }}
           BUDGET: ${{ inputs.budget }}
           EFFORT: ${{ inputs.effort }}
+          CONTEXT: ${{ inputs.context }}
           WORKSPACE_ID: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
         run: |
           # 빈 값이 우선순위를 차지하지 않도록 값이 있을 때만 export한다
           if [ -n "$WORKSPACE_ID" ]; then export ANTHROPIC_WORKSPACE_ID="$WORKSPACE_ID"; fi
-          uv run mvpgen "$IDEA" --budget "$BUDGET" --effort "$EFFORT"
+          args=(--budget "$BUDGET" --effort "$EFFORT")
+          if [ -n "$CONTEXT" ]; then args+=(--context "$CONTEXT"); fi
+          uv run mvpgen "$IDEA" "${args[@]}"
 
       - name: Upload result
         if: always()
