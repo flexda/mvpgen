@@ -28,6 +28,7 @@ def generate(
     pass_threshold: Annotated[int, typer.Option(help="critic 합격 점수")] = 80,
     resume: Annotated[str | None, typer.Option(help="이어서 실행할 결과 폴더 이름(slug)")] = None,
     secrets: Annotated[Path, typer.Option(help="claude.env, mvp.env가 있는 폴더")] = Path("secrets"),
+    lessons: Annotated[Path, typer.Option(help="실행 간 교훈 파일. 저장소에 커밋해 로컬과 Actions가 함께 쓴다")] = Path("lessons.md"),
     context: Annotated[Path | None, typer.Option(help="미리 조사한 참고 자료 폴더. 결과 폴더의 context/로 복사해 Plan과 Build가 읽는다")] = None,
     gha_oidc: Annotated[bool, typer.Option(help="GitHub Actions에서 OIDC 토큰을 자동으로 받아 갱신")] = True,
     oidc_audience: Annotated[str, typer.Option(help="GitHub OIDC 토큰의 audience (federation 규칙과 같아야 함)")] = DEFAULT_AUDIENCE,
@@ -98,7 +99,7 @@ def generate(
         idea=idea, out_dir=out, model=model, effort=effort, budget_usd=budget,
         max_review_rounds=max_review_rounds, max_gate_blocks=max_gate_blocks,
         max_fix_rounds=max_fix_rounds, pass_threshold=pass_threshold,
-        protected_paths=protected, mvp_env=mvp_env,
+        protected_paths=protected, mvp_env=mvp_env, lessons_path=lessons.resolve(),
     )
     typer.echo(f"아이디어: {idea}\n폴더: {run_dir}\n모델: {model} (effort {effort}), 예산 ${budget:.2f}")
     typer.echo(f"Claude 인증: {auth}")

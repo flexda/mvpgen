@@ -12,6 +12,9 @@
 #   iss: https://token.actions.githubusercontent.com
 #   aud: https://api.anthropic.com (--oidc-audience로 변경 가능)
 #   sub: workflow_dispatch를 main에서 실행하면 repo:<owner>/<repo>:ref:refs/heads/main
+#
+# lessons.md(실행 간 교훈)는 저장소에 둔다. generate가 갱신한 파일을 artifact로 넘기면
+# save-lessons가 main에 합쳐 커밋한다. 쓰기 권한은 에이전트가 돌지 않는 save-lessons에만 준다.
 
 name: mvpgen
 
@@ -105,3 +108,48 @@ jobs:
             !workspace/**/snapshots/
           if-no-files-found: warn
           retention-days: 14
+
+      - name: Upload lessons
+        if: always()
+        uses: actions/upload-artifact@v7.0.0
+        with:
+          name: lessons-${{ github.run_id }}
+          path: lessons.md
+          if-no-files-found: ignore
+          retention-days: 1
+
+  save-lessons:
+    needs: generate
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # 실행 중에 main이 앞서 나갔을 수 있으므로 실행 시점 커밋이 아니라 최신 main에 합친다
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: main
+
+      - uses: astral-sh/setup-uv@v10.0.0
+
+      - name: Download lessons
+        id: download
+        continue-on-error: true
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: lessons-${{ github.run_id }}
+          path: ${{ runner.temp }}/lessons
+
+      - name: Merge and commit lessons
+        if: steps.download.outcome == 'success'
+        run: |
+          added=$(uv run --frozen python -I -c 'import sys; from pathlib import Path; from mvpgen.lessons import merge_lessons; print(merge_lessons(Path("lessons.md"), Path(sys.argv[1])))' "$RUNNER_TEMP/lessons/lessons.md")
+          if [ -z "$(git status --porcelain -- lessons.md)" ]; then
+            echo "새 교훈 없음, 커밋하지 않는다"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add lessons.md
+          git commit -m "Update lessons.md from run ${{ github.run_id }} (+${added})"
+          git push

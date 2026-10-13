@@ -1,7 +1,7 @@
 import json
 
 from mvpgen.critic import Review, RoundTracker, check_review_file, is_accepted, load_review
-from mvpgen.lessons import lessons_prompt, record_lessons
+from mvpgen.lessons import lessons_prompt, merge_lessons, record_lessons
 
 
 def review(score, passed=True, issues=()):
@@ -77,3 +77,23 @@ def test_lessons_dedupe_and_inject(tmp_path):
     assert record_lessons(path, "build", issues) == 0
     assert "삭제 버튼" in lessons_prompt(path, "build")
     assert lessons_prompt(path, "plan") == ""
+
+
+def test_merge_lessons_keeps_both_sides(tmp_path):
+    header = "# 이전 실행에서 critic이 지적한 문제\n\n"
+    dst = tmp_path / "main.md"
+    src = tmp_path / "run.md"
+    # main에는 실행 중에 다른 항목(B)이 추가됐고, 실행은 A에 C를 더했다
+    dst.write_text(header + "- [plan] A -> a\n- [build] B -> b\n")
+    src.write_text(header + "- [plan] A -> a\n- [plan] C -> c\n- [plan] C -> c\n")
+    assert merge_lessons(dst, src) == 1
+    assert dst.read_text().splitlines()[2:] == ["- [plan] A -> a", "- [build] B -> b", "- [plan] C -> c"]
+    assert merge_lessons(dst, src) == 0
+
+
+def test_merge_lessons_creates_missing_dst(tmp_path):
+    src = tmp_path / "run.md"
+    src.write_text("# h\n\n- [build] X -> x\n")
+    dst = tmp_path / "new" / "lessons.md"
+    assert merge_lessons(dst, src) == 1
+    assert "- [build] X -> x" in dst.read_text()

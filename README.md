@@ -55,7 +55,7 @@ gh run watch <RUN_ID> -R flexda/mvpgen
 # 3. 결과 내려받기 (workspace/는 git에서 제외됨)
 gh run download <RUN_ID> -R flexda/mvpgen -D workspace/ci-<RUN_ID>
 
-# 4. slug 폴더 확인 (lessons.md 옆에 있는 폴더)
+# 4. slug 폴더 확인
 ls workspace/ci-<RUN_ID>/mvpgen-<RUN_ID>/
 ```
 
@@ -92,8 +92,8 @@ uv run mvpgen "오늘 뭐하지: 전시 정보를 모아 오늘 볼 만한 전�
 결과는 `workspace/<slug>/`에 생긴다.
 
 ```
+lessons.md              # 저장소에 커밋된 교훈 파일 (--lessons로 경로 변경)
 workspace/
-  lessons.md            # critic이 반복해서 지적한 문제. 다음 실행의 프롬프트에 들어간다
   <slug>/
     PRD.md, spec.json   # Plan 단계 산출물
     app/                # 생성된 앱
@@ -113,7 +113,7 @@ Python 오케스트레이터가 Plan, Build, 최종 검증, 리포트 순서로 
 
 1. **Stop hook 게이트 (세션 안):** 에이전트가 끝내려 할 때마다 검사기가 돈다. Plan 단계는 spec 스키마, 의도 대응표(`intent`: 아이디어의 요구마다 담당 feature 연결)와 PRD 제목을, Build 단계는 install, test, 실행과 smoke를 검사한다. 실패하면 `{"decision": "block"}`으로 종료를 막고 실패 로그를 전달해 같은 세션에서 고치게 한다. 세션당 최대 `--max-gate-blocks`회까지 막는다.
 2. **독립 critic (세션 밖):** 검사를 통과하면 맥락을 공유하지 않는 새 세션이 루브릭으로 채점해 `reviews/*.json`을 쓴다. Plan critic은 아이디어 원문을 직접 요구 단위로 나눠 `intent`와 대조하고, 빠진 요구는 critical로 본다. 80점 미만이거나 critical issue가 있으면 지적 사항을 넘겨 다시 만들게 하고, `--max-review-rounds`회까지 반복한다. 점수가 직전 최고점보다 떨어지면 최고점 라운드의 산출물로 되돌린다.
-3. **lessons.md (실행 사이):** major 이상의 지적을 누적하고, 다음 실행 때 같은 단계의 시스템 프롬프트에 최근 20개를 넣는다.
+3. **lessons.md (실행 사이):** major 이상의 지적을 저장소 루트의 `lessons.md`에 누적하고, 다음 실행 때 같은 단계의 시스템 프롬프트에 최근 20개를 넣는다. 로컬 실행과 Actions가 같은 파일을 쓴다. Actions에서는 실행이 끝나면 `save-lessons` 잡이 새 항목을 최신 main의 `lessons.md`에 합쳐 커밋한다(새 항목이 없으면 커밋하지 않는다). 쓰기 권한은 에이전트가 돌지 않는 이 잡에만 있다. 그래서 Actions 실행 뒤에는 로컬에서 `git pull`을 먼저 한다.
 
 ### 안전장치
 

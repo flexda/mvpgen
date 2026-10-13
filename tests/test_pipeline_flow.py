@@ -86,6 +86,31 @@ async def test_full_flow_offline(tmp_path, monkeypatch):
     assert "fake-todo" in readme and "export PORT=8000" in readme
 
 
+async def test_lessons_path_outside_out_dir(tmp_path, monkeypatch):
+    systems = []
+    base = make_fake_agent([])
+
+    async def capture(**kw):
+        systems.append((kw["stage"], kw.get("system_prompt", "")))
+        return await base(**kw)
+
+    monkeypatch.setattr(pipeline_mod, "run_agent", capture)
+    lessons = tmp_path / "repo" / "lessons.md"
+    lessons.parent.mkdir()
+    lessons.write_text("# h\n\n- [plan] 이전 실행의 기획 지적 -> 고쳐라\n")
+    out = tmp_path / "workspace"
+    run_dir = out / "run"
+    run_dir.mkdir(parents=True)
+    config = RunConfig(idea="할 일 목록", out_dir=out, budget_usd=5, lessons_path=lessons)
+
+    assert await Pipeline(config, run_dir).run() is True
+
+    # 저장소의 교훈이 Plan 시스템 프롬프트에 들어가고, 새 지적도 같은 파일에 쌓여야 한다
+    assert "이전 실행의 기획 지적" in next(s for st, s in systems if st == "plan")
+    assert "범위가 넓다" in lessons.read_text()
+    assert not (out / "lessons.md").exists()
+
+
 async def test_fallback_folder_renamed_after_plan(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setattr(pipeline_mod, "run_agent", make_fake_agent(calls))

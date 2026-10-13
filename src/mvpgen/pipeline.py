@@ -54,6 +54,8 @@ class RunConfig:
     critic_max_turns: int = 60
     protected_paths: list[Path] = field(default_factory=list)
     mvp_env: dict[str, str] = field(default_factory=dict)
+    # 실행 간 교훈 파일. 없으면 out_dir/lessons.md
+    lessons_path: Path | None = None
 
 
 def make_slug(idea: str, now: datetime | None = None) -> str:
@@ -95,7 +97,7 @@ def find_run_dir(out_dir: Path, slug: str) -> Path | None:
 class Pipeline:
     def __init__(self, config: RunConfig, run_dir: Path) -> None:
         self.config = config
-        self.lessons_path = config.out_dir / "lessons.md"
+        self.lessons_path = config.lessons_path or config.out_dir / "lessons.md"
         self._set_run_dir(run_dir)
         self.state: dict[str, Any] = self._load_state()
 

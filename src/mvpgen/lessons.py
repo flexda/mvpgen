@@ -30,10 +30,24 @@ def record_lessons(path: Path, stage: str, issues: list[Issue]) -> int:
             added.append(line)
     if not added:
         return 0
-    kept = (existing + added)[-MAX_STORED:]
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("# 이전 실행에서 critic이 지적한 문제\n\n" + "\n".join(kept) + "\n", encoding="utf-8")
+    _write(path, existing + added)
     return len(added)
+
+
+def merge_lessons(dst: Path, src: Path) -> int:
+    """src에만 있는 항목을 dst 뒤에 붙인다. 실행 중에 dst가 바뀌었어도 양쪽 항목을 모두 살린다. 추가한 개수를 돌려준다."""
+    existing = _entries(dst)
+    seen = set(existing)
+    added = [e for e in dict.fromkeys(_entries(src)) if e not in seen]
+    if added:
+        _write(dst, existing + added)
+    return len(added)
+
+
+def _write(path: Path, entries: list[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    kept = entries[-MAX_STORED:]
+    path.write_text("# 이전 실행에서 critic이 지적한 문제\n\n" + "\n".join(kept) + "\n", encoding="utf-8")
 
 
 def lessons_prompt(path: Path, stage: str) -> str:
