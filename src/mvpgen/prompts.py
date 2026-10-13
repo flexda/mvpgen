@@ -10,6 +10,10 @@ SPEC_EXAMPLE = {
     "name": "quick-notes",
     "summary": "메모를 빠르게 적고 태그로 찾는 웹앱",
     "stack": "Python 3.13, FastAPI, SQLite, 서버 렌더링 HTML, pytest",
+    "intent": [
+        {"requirement": "메모를 빠르게 적는다", "feature_ids": ["F1"]},
+        {"requirement": "태그로 메모를 찾는다", "feature_ids": ["F2"]},
+    ],
     "features": [
         {"id": "F1", "title": "메모 작성", "description": "제목과 본문으로 메모를 만든다"},
         {"id": "F2", "title": "태그 검색", "description": "태그를 눌러 해당 메모만 본다"},
@@ -33,6 +37,11 @@ PLAN_SYSTEM = f"""\
    문제, 대상 사용자와 대표 시나리오, 기능 목록, 이번 MVP에서 하지 않을 것을 구체적으로 쓴다.
 2. spec.json: 아래 예시와 같은 키를 갖는 JSON.
 {json.dumps(SPEC_EXAMPLE, ensure_ascii=False, indent=2)}
+
+spec.json 작성 규칙:
+- name은 앱 내용을 나타내는 영문 소문자와 하이픈 이름으로 짓는다 (아이디어가 한글이어도). 결과 폴더 이름에 쓰인다.
+- intent에는 아이디어 원문이 요구한 것을 빠짐없이 하나씩 나눠 적고(원문 표현을 살린다), 각각을 해결하는 feature id를 연결한다.
+  원문에 없는 요구는 intent에 넣지 않는다. 시연에 필요한 보조 기능은 intent 없이 features에만 둘 수 있다.
 
 스택 선택 규칙:
 - macOS 한 대에서 install_cmd와 run_cmd만으로 실행되어야 한다. 별도 DB 서버와 Docker는 쓰지 않는다.

@@ -37,10 +37,19 @@ class Criterion(BaseModel):
     description: str = Field(..., min_length=1)
 
 
+class Intent(BaseModel):
+    """아이디어 원문에서 뽑은 요구 하나와, 이를 해결하는 feature."""
+
+    requirement: str = Field(..., min_length=1)
+    feature_ids: list[str] = Field(..., min_length=1)
+
+
 class Spec(BaseModel):
     name: str = Field(..., min_length=1)
     summary: str = Field(..., min_length=1)
     stack: str = Field(..., min_length=1)
+    # 이 필드가 생기기 전의 spec도 읽을 수 있게 선택 항목으로 둔다. 새 Plan은 check_plan이 요구한다
+    intent: list[Intent] | None = None
     features: list[Feature] = Field(..., min_length=1, max_length=10)
     acceptance_criteria: list[Criterion] = Field(..., min_length=1)
     install_cmd: str | None = None
@@ -60,6 +69,9 @@ class Spec(BaseModel):
         uncovered = set(feature_ids) - {c.feature_id for c in self.acceptance_criteria}
         if uncovered:
             raise ValueError(f"완료 기준이 없는 feature: {sorted(uncovered)}")
+        unknown_intent = {fid for i in self.intent or [] for fid in i.feature_ids} - set(feature_ids)
+        if unknown_intent:
+            raise ValueError(f"intent가 존재하지 않는 feature를 가리킨다: {sorted(unknown_intent)}")
         return self
 
 
@@ -77,7 +89,8 @@ def check_plan(run_dir: Path) -> list[str]:
     else:
         try:
             json.loads(spec_path.read_text(encoding="utf-8"))
-            load_spec(spec_path)
+            if not load_spec(spec_path).intent:
+                problems.append("spec.json에 intent가 없다. 아이디어 원문의 요구를 빠짐없이 나눠 적고 각각 feature id를 연결하라")
         except json.JSONDecodeError as e:
             problems.append(f"spec.json이 올바른 JSON이 아니다: {e}")
         except ValidationError as e:

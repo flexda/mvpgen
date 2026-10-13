@@ -29,7 +29,7 @@ GitHub Actions에서 실행하면 API 키가 필요 없다. 워크플로는 `.gi
    - subject_prefix 예: `repo:<owner>/<repo>:ref:refs/heads/main` (main에서 수동 실행할 때)
 2. 저장소 Settings > Secrets and variables > Actions > Variables에 `ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_ORGANIZATION_ID`, `ANTHROPIC_SERVICE_ACCOUNT_ID`를 등록한다. 규칙이 여러 워크스페이스에 걸쳐 있으면 `ANTHROPIC_WORKSPACE_ID`도 등록한다. 모두 비밀값이 아니다.
 3. MVP가 외부 API 키를 써야 하면 Secret `MVP_ENV`에 `KEY=VALUE` 여러 줄을 넣는다.
-4. Actions 탭에서 mvpgen 워크플로를 골라 Run workflow로 아이디어를 입력한다. 결과는 실행 페이지의 artifact로 내려받는다.
+4. 실행과 결과 내려받기는 아래 "빠른 사용법 (GitHub Actions)"을 따른다.
 
 동작 방식:
 
@@ -42,9 +42,11 @@ GitHub Actions에서 실행하면 API 키가 필요 없다. 워크플로는 `.gi
 
 ## 빠른 사용법 (GitHub Actions)
 
+Actions 탭에서 mvpgen 워크플로를 골라 Run workflow로 실행해도 되고, 아래처럼 `gh`로 해도 된다.
+
 ```bash
-# 1. 실행 (Actions 탭의 Run workflow와 같다)
-gh workflow run mvpgen.yml -R flexda/mvpgen -f idea="만들 앱 한 줄 설명" -f budget=3 -f effort=high
+# 1. 실행 (main에서 돌려야 federation 규칙과 맞는다)
+gh workflow run mvpgen.yml -R flexda/mvpgen --ref main -f idea="만들 앱 한 줄 설명" -f budget=10 -f effort=high
 
 # 2. 진행 확인
 gh run list -R flexda/mvpgen --workflow mvpgen.yml --limit 3
@@ -53,20 +55,25 @@ gh run watch <RUN_ID> -R flexda/mvpgen
 # 3. 결과 내려받기 (workspace/는 git에서 제외됨)
 gh run download <RUN_ID> -R flexda/mvpgen -D workspace/ci-<RUN_ID>
 
-# 4. 생성된 앱 실행 (경로와 명령은 결과 폴더의 README.md에 있다)
-cd workspace/ci-<RUN_ID>/mvpgen-<RUN_ID>/<slug>/app
-uv sync
-export PORT=8000
-uv run uvicorn app.main:app --host 127.0.0.1 --port $PORT   # 스택마다 다름. spec.json의 run_cmd 참고
+# 4. slug 폴더 확인 (lessons.md 옆에 있는 폴더)
+ls workspace/ci-<RUN_ID>/mvpgen-<RUN_ID>/
 ```
+
+- `budget`은 달러 단위 상한이다 (기본 10). 다 쓰면 중간에 멈추고 미완성 앱이 남을 수 있다.
+- `<slug>`는 `<시각>-<아이디어의 영문·숫자 단어 최대 4개>` 형식이다. 아이디어가 한글뿐이면 처음에는 `-mvp`로 끝나고, Plan 단계가 끝난 뒤 spec의 영문 앱 이름으로 바뀐다 (예: `20261012-064111-mvp` -> `20261012-064111-simple-memo`). 바뀌기 전 이름은 `run_report.json`의 `renamed_from`에 남는다.
+- 실행이 일찍 실패하면(예: federation 변수 누락) artifact가 올라가지 않아 `gh run download`가 실패한다. 이때는 `gh run view <RUN_ID> -R flexda/mvpgen --log-failed`로 원인을 본다.
+- 생성된 앱의 설치와 실행 명령은 스택마다 다르다. `<slug>/README.md`의 "실행" 절(또는 `spec.json`의 `install_cmd`, `run_cmd`)을 그대로 따른다.
+- artifact는 zip이라 실행 권한이 빠진다. 실행 명령이 `./run.sh` 같은 스크립트를 부르면 먼저 `chmod +x`를 한다.
 
 ## 로컬 실행
 
 ```bash
 uv run mvpgen "할 일 목록 웹앱: 추가, 완료 표시, 삭제"
 uv run mvpgen "..." --budget 5 --effort medium --max-review-rounds 1
-uv run mvpgen --resume 20261012-153000-mvp   # 중단된 실행 이어하기
+uv run mvpgen --resume 20261012-153000-simple-memo   # 중단된 실행 이어하기
 ```
+
+`--resume`에는 Plan 뒤에 바뀌기 전의 `-mvp` 이름을 줘도 바뀐 폴더를 찾아 이어 간다.
 
 결과는 `workspace/<slug>/`에 생긴다.
 
@@ -90,8 +97,8 @@ Python 오케스트레이터가 Plan, Build, 최종 검증, 리포트 순서로 
 
 검증 루프는 세 가지다.
 
-1. **Stop hook 게이트 (세션 안):** 에이전트가 끝내려 할 때마다 검사기가 돈다. Plan 단계는 spec 스키마와 PRD 제목을, Build 단계는 install, test, 실행과 smoke를 검사한다. 실패하면 `{"decision": "block"}`으로 종료를 막고 실패 로그를 전달해 같은 세션에서 고치게 한다. 세션당 최대 `--max-gate-blocks`회까지 막는다.
-2. **독립 critic (세션 밖):** 검사를 통과하면 맥락을 공유하지 않는 새 세션이 루브릭으로 채점해 `reviews/*.json`을 쓴다. 80점 미만이거나 critical issue가 있으면 지적 사항을 넘겨 다시 만들게 하고, `--max-review-rounds`회까지 반복한다. 점수가 직전 최고점보다 떨어지면 최고점 라운드의 산출물로 되돌린다.
+1. **Stop hook 게이트 (세션 안):** 에이전트가 끝내려 할 때마다 검사기가 돈다. Plan 단계는 spec 스키마, 의도 대응표(`intent`: 아이디어의 요구마다 담당 feature 연결)와 PRD 제목을, Build 단계는 install, test, 실행과 smoke를 검사한다. 실패하면 `{"decision": "block"}`으로 종료를 막고 실패 로그를 전달해 같은 세션에서 고치게 한다. 세션당 최대 `--max-gate-blocks`회까지 막는다.
+2. **독립 critic (세션 밖):** 검사를 통과하면 맥락을 공유하지 않는 새 세션이 루브릭으로 채점해 `reviews/*.json`을 쓴다. Plan critic은 아이디어 원문을 직접 요구 단위로 나눠 `intent`와 대조하고, 빠진 요구는 critical로 본다. 80점 미만이거나 critical issue가 있으면 지적 사항을 넘겨 다시 만들게 하고, `--max-review-rounds`회까지 반복한다. 점수가 직전 최고점보다 떨어지면 최고점 라운드의 산출물로 되돌린다.
 3. **lessons.md (실행 사이):** major 이상의 지적을 누적하고, 다음 실행 때 같은 단계의 시스템 프롬프트에 최근 20개를 넣는다.
 
 ### 안전장치

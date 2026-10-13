@@ -22,6 +22,7 @@ SERVER = (
 def fake_spec():
     return {
         "name": "fake-todo", "summary": "할 일 목록", "stack": "Python stdlib",
+        "intent": [{"requirement": "할 일 목록을 본다", "feature_ids": ["F1"]}],
         "features": [{"id": "F1", "title": "목록", "description": "할 일을 본다"}],
         "acceptance_criteria": [{"id": "AC1", "feature_id": "F1", "description": "GET /에 Fake Todo"}],
         "install_cmd": None, "test_cmd": "test -f ok.txt", "run_cmd": f"{PY} server.py",
@@ -83,6 +84,39 @@ async def test_full_flow_offline(tmp_path, monkeypatch):
     assert "범위가 넓다" in (tmp_path / "lessons.md").read_text()
     readme = (run_dir / "README.md").read_text()
     assert "fake-todo" in readme and "export PORT=8000" in readme
+
+
+async def test_fallback_folder_renamed_after_plan(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(pipeline_mod, "run_agent", make_fake_agent(calls))
+    old_dir = tmp_path / "20261012-153000-mvp"
+    old_dir.mkdir()
+    pipe = Pipeline(RunConfig(idea="할 일 목록", out_dir=tmp_path, budget_usd=5), old_dir)
+
+    assert await pipe.run() is True
+
+    new_dir = tmp_path / "20261012-153000-fake-todo"
+    assert not old_dir.exists() and pipe.run_dir == new_dir
+    # Build 이후 산출물이 모두 새 폴더에 있어야 추적이 이어진다
+    assert (new_dir / "app" / "server.py").exists()
+    assert (new_dir / "reviews" / "build-r1.json").exists()
+    assert (new_dir / "snapshots" / "plan").is_dir() and (new_dir / "snapshots" / "build").is_dir()
+    report = json.loads((new_dir / "run_report.json").read_text())
+    assert report["renamed_from"] == "20261012-153000-mvp"
+    assert report["run_dir"] == "20261012-153000-fake-todo"
+    assert report["stages"]["verify"]["status"] == "passed"
+    assert pipeline_mod.find_run_dir(tmp_path, "20261012-153000-mvp") == new_dir
+
+
+async def test_idea_slug_ending_in_mvp_is_not_renamed(tmp_path, monkeypatch):
+    monkeypatch.setattr(pipeline_mod, "run_agent", make_fake_agent([]))
+    run_dir = tmp_path / "20261012-153000-todo-mvp"
+    run_dir.mkdir()
+    pipe = Pipeline(RunConfig(idea="todo MVP", out_dir=tmp_path, budget_usd=5), run_dir)
+
+    assert await pipe.run() is True
+    assert pipe.run_dir == run_dir and run_dir.exists()
+    assert json.loads((run_dir / "run_report.json").read_text())["renamed_from"] is None
 
 
 async def test_budget_stops_pipeline(tmp_path, monkeypatch):

@@ -33,18 +33,20 @@ def generate(
 ) -> None:
     from mvpgen.envfiles import load_claude_env, load_mvp_env
     from mvpgen.identity import GitHubOidcRefresher, anthropic_config_dir, detect_auth
-    from mvpgen.pipeline import Pipeline, RunConfig, make_slug
+    from mvpgen.pipeline import Pipeline, RunConfig, find_run_dir, make_slug
 
     out = out.resolve()
     secrets = secrets.resolve()
     load_claude_env(secrets)
     mvp_env = load_mvp_env(secrets)
     if resume:
-        run_dir = out / resume
-        state_path = run_dir / "state.json"
-        if not state_path.exists():
-            raise typer.BadParameter(f"{state_path}가 없다", param_hint="--resume")
-        idea = idea or json.loads(state_path.read_text(encoding="utf-8"))["idea"]
+        found = find_run_dir(out, resume)
+        if found is None:
+            raise typer.BadParameter(f"{out / resume / 'state.json'}가 없다", param_hint="--resume")
+        if found.name != resume:
+            typer.echo(f"{resume}은 Plan 뒤에 {found.name}으로 이름이 바뀌었다. 그 폴더로 이어서 실행한다")
+        run_dir = found
+        idea = idea or json.loads((run_dir / "state.json").read_text(encoding="utf-8"))["idea"]
     elif not idea:
         raise typer.BadParameter("아이디어를 입력하거나 --resume을 지정하라", param_hint="IDEA")
     else:

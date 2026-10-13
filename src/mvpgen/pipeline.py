@@ -62,14 +62,70 @@ def make_slug(idea: str, now: datetime | None = None) -> str:
     return f"{now:%Y%m%d-%H%M%S}-{tail}"
 
 
+NAME_SLUG_MAX = 40
+
+
+def name_slug(name: str) -> str:
+    """spec.name을 폴더 이름에 쓸 수 있게 영문 소문자, 숫자, 하이픈만 남긴다."""
+    return "-".join(re.findall(r"[a-z0-9]+", name.lower()))[:NAME_SLUG_MAX].strip("-")
+
+
+def fallback_stamp(slug: str) -> str | None:
+    """아이디어에서 영문 단어를 못 뽑아 '<시각>-mvp'가 된 slug면 시각 부분을 돌려준다.
+    'build-a-todo-mvp'처럼 아이디어에 mvp가 들어간 slug는 해당하지 않는다."""
+    m = re.fullmatch(r"(\d{8}-\d{6})-mvp", slug)
+    return m.group(1) if m else None
+
+
+def find_run_dir(out_dir: Path, slug: str) -> Path | None:
+    """slug 폴더를 찾는다. Plan 뒤에 이름이 바뀌었으면 renamed_from이 slug인 폴더를 돌려준다."""
+    direct = out_dir / slug
+    if (direct / "state.json").exists():
+        return direct
+    stamp = fallback_stamp(slug)
+    if stamp is None:
+        return None
+    for cand in sorted(out_dir.glob(f"{stamp}-*/state.json")):
+        if json.loads(cand.read_text(encoding="utf-8")).get("renamed_from") == slug:
+            return cand.parent
+    return None
+
+
 class Pipeline:
     def __init__(self, config: RunConfig, run_dir: Path) -> None:
         self.config = config
+        self.lessons_path = config.out_dir / "lessons.md"
+        self._set_run_dir(run_dir)
+        self.state: dict[str, Any] = self._load_state()
+
+    def _set_run_dir(self, run_dir: Path) -> None:
+        # 모든 단계가 이 세 경로에서 파일 경로를 만든다. 폴더 이름을 바꾸면 여기서 한 번에 갱신한다
         self.run_dir = run_dir
         self.app_dir = run_dir / "app"
-        self.lessons_path = config.out_dir / "lessons.md"
         self.state_path = run_dir / "state.json"
-        self.state: dict[str, Any] = self._load_state()
+
+    def rename_after_plan(self) -> None:
+        """아이디어에서 영문 slug를 못 만들어 '<시각>-mvp'가 된 폴더를 spec.name 기반 이름으로 바꾼다."""
+        stamp = fallback_stamp(self.run_dir.name)
+        if stamp is None or not (self.run_dir / "spec.json").exists():
+            return
+        tail = name_slug(load_spec(self.run_dir / "spec.json").name)
+        if not tail or tail == "mvp":
+            return
+        old = self.run_dir.name
+        new_dir = self.run_dir.with_name(f"{stamp}-{tail}")
+        if new_dir.exists():
+            print(f"폴더 이름 변경 생략: {new_dir.name}이 이미 있다", flush=True)
+            return
+        try:
+            self.run_dir.rename(new_dir)
+        except OSError as e:
+            print(f"폴더 이름 변경 실패, 기존 이름으로 계속한다: {e}", flush=True)
+            return
+        self._set_run_dir(new_dir)
+        self.state["renamed_from"] = old
+        self._save()
+        print(f"\n폴더 이름 변경: {old} -> {new_dir.name}\n폴더: {new_dir}", flush=True)
 
     # ---- 상태 ----
     def _load_state(self) -> dict[str, Any]:
@@ -290,6 +346,8 @@ class Pipeline:
         verify_ok = stages.get("verify", {}).get("status") == "passed"
         report = {
             "idea": self.config.idea,
+            "run_dir": self.run_dir.name,
+            "renamed_from": self.state.get("renamed_from"),
             "success": verify_ok and error is None,
             "error": error,
             "model": self.config.model,
@@ -310,6 +368,8 @@ class Pipeline:
         error: str | None = None
         try:
             await self.plan()
+            # Plan 루프가 최고점 라운드로 되돌린 뒤의 최종 spec.name을 쓴다. --resume에서 plan을 건너뛰어도 여기를 지난다
+            self.rename_after_plan()
             await self.build()
             self.final_verify()
         except (BudgetExceeded, StageFailed, AgentAborted) as e:

@@ -6,6 +6,9 @@ PLAN_RUBRIC = """\
 3. 로컬 실행 가능성: 외부 유료 서비스, API 키, 별도 DB 서버 없이 install_cmd와 run_cmd만으로 한 대의 맥에서 실행되는가. 스택이 아이디어에 비해 과하지 않은가.
 4. 기준의 검증 가능성: 모든 acceptance criterion이 자동 테스트나 HTTP 요청으로 참/거짓을 판정할 수 있게 구체적인가.
 5. 명령의 정확성: install_cmd, test_cmd, run_cmd, smoke가 선택한 스택에서 실제로 동작할 명령인가. 서버라면 PORT 환경변수를 쓰고 smoke.url에 {port}가 있는가.
+6. 의도 대응: 아이디어 원문을 요구 단위로 직접 나눠 본 뒤 spec.json의 intent와 대조하라. 원문의 요구가 intent에서 빠졌거나,
+   연결된 feature와 그 acceptance criterion이 그 요구를 실제로 해결하지 못하면 critical이다.
+   원문에 없는 요구를 intent에 지어 넣었거나 원문의 뜻을 바꿔 옮겼으면 major다. 요구별 대조 결과를 summary에 짧게 남겨라.
 """
 
 BUILD_RUBRIC = """\
