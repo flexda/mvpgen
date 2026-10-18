@@ -18,6 +18,9 @@
 | 인증 | Workload Identity Federation (GitHub Actions) | 사용자 요청, API 키 불필요 |
 | 저장소 | github.com/flexda/mvpgen (private) | 사용자 요청 |
 | 기본 모델 | `claude-opus-5-5`, effort `high` | |
+| 디자인 단계 (2026-10-18) | Plan과 Build 사이에 Design 단계 추가. 원천은 기존 DESIGN.md 라이브러리 | 사용자 선택. 1차 구축 뒤 "기능 추가 안 함" 원칙의 예외 |
+| 디자인 방향 (2026-10-18) | 분야에 맞는 무난한 화면보다 의외성을 우선 | 사용자 요청("뻔한 전시추천사이트처럼 보여야 할까") |
+| 의외성 강제 방식 (2026-10-18) | 후보 추출은 코드가 무작위로(seed 기록), 기준안 선택은 gate가 차단 | LLM에게 고르게만 하면 매번 비슷한 선택으로 수렴하기 때문 |
 
 ## 구조
 
@@ -168,6 +171,18 @@
 | 평가 | Design critic 루브릭 5개 항목(의외성, 맥락 번역, 사용성, 구현 가능성, 기능 대응). Build 루브릭 6번에 DESIGN.md 준수 추가 |
 | 옵션 | `--design auto|off|<파일>`, `--design-seed`, `--design-candidates`, `--design-library`. Actions 입력 `design`, `design_seed` |
 | 검증 | 오프라인 테스트 85개 통과. 실제 실행은 아직 하지 않음 |
+
+### 결정 과정
+
+| 순서 | 질문이나 제안 | 결정 | 버린 안과 이유 |
+| --- | --- | --- | --- |
+| 1 | mvpgen에 디자인 레퍼런스 조사 에이전트가 있나 | 없음을 코드로 확인(웹 도구, 디자인 프롬프트, 디자인 루브릭 모두 없음). 사용자가 "Design 단계 추가"를 선택 | context 폴더에 수동으로 넣기(현재 프롬프트가 context를 데이터 출처로만 읽게 해서 반영 여부가 불확실), 그대로 실행(기준선만 얻음) |
+| 2 | WebSearch와 WebFetch로 레퍼런스를 조사해 DESIGN.md를 만드는 에이전트(첫 계획) | 사용자가 거절하고 "이미 DESIGN.md를 제공하는 사이트를 쓰자"고 함 | 웹 조사 에이전트: 사용자 거절. Actions 환경에서 WebSearch가 동작하는지도 미확인이었음 |
+| 3 | 원천 조사 | VoltAgent/awesome-design-md 채택(MIT, 84개, Google Stitch 형식, 파일당 24~35KB). 미술관 브랜드는 없음 | getdesign.md는 같은 파일의 미리보기 사이트, webdesignhot은 출처 확인이 덜 됨 |
+| 4 | 브랜드 하나 고르기(Runway, Airbnb, WIRED, Oura)와 넣는 방식 질문 | 답하지 않고 방향을 바꿈: "꼭 뻔한 전시 추천 사이트처럼 보여야 할까? 의외성을 맡을 창의적 에이전트를 넣자" | 브랜드를 직접 지정하는 방식은 `--design <파일>` 옵션으로만 남김 |
+| 5 | 의외성을 어떻게 보장할까 | 코드가 후보 8개를 무작위로 뽑고, 에이전트는 기준안 1개와 의외안 2개를 낸 뒤 의외안만 고를 수 있음. 라이브러리는 저장소에 복사해 실행 중 네트워크를 쓰지 않음 | LLM 자유 선택(같은 "의외의" 선택으로 수렴), 실행 중 다운로드(재현성과 네트워크 의존) |
+| 6 | 작업 보관 | 브랜치 `feat/design-stage`에 커밋, push, draft PR #1. 관련 없는 미커밋 변경(`docs/mmca-pipeline-report` 브랜치)은 제외 | main 직접 반영(실행 전 확인 절차를 건너뜀) |
+| 7 | 결정 기록 위치 | 이 ARCHIVE에 계속 적재 | 별도 DECISIONS.md(역할은 분리되지만 사용자가 문서 하나로 관리하기를 택함) |
 
 한계: 루브릭의 대비(WCAG)와 360px 항목은 critic이 문서와 CSS를 읽고 판단하는 것이지 측정이 아니다. Design critic에는 Bash가 없고 Build critic에는 브라우저가 없다. 위 "휴대폰 폭" 문제는 이 변경으로 닫히지 않았고, 실제 확인은 playwright 360px 스크린샷으로 한다.
 
