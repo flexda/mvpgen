@@ -77,6 +77,8 @@ def generate(
     if auth is None:
         typer.echo(
             "Claude 인증 수단이 없다. 다음 중 하나를 준비하라:\n"
+            "  - 구독(Pro, Max) 로그인: 터미널에서 claude를 실행해 /login\n"
+            f"  - {secrets / 'claude.env'}에 CLAUDE_CODE_OAUTH_TOKEN (claude setup-token으로 발급, 구독 사용)\n"
             f"  - {secrets / 'claude.env'}에 ANTHROPIC_API_KEY\n"
             "  - Workload Identity Federation 변수 (ANTHROPIC_FEDERATION_RULE_ID, ANTHROPIC_ORGANIZATION_ID,\n"
             "    ANTHROPIC_SERVICE_ACCOUNT_ID, ANTHROPIC_IDENTITY_TOKEN_FILE)\n"

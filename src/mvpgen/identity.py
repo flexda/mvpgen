@@ -1,6 +1,6 @@
 """Workload Identity Federation 지원.
 
-- detect_auth(): Claude 인증 수단이 준비되었는지 판정한다 (API 키, 클라우드 제공자, 페더레이션 변수, 프로필).
+- detect_auth(): Claude 인증 수단이 준비되었는지 판정한다 (API 키, 구독 토큰, 클라우드 제공자, 페더레이션 변수, 프로필, 구독 로그인).
 - GitHubOidcRefresher: GitHub Actions에서 OIDC 토큰을 주기적으로 받아 ANTHROPIC_IDENTITY_TOKEN_FILE에 쓴다.
   GitHub 토큰은 약 5분 뒤 만료되고 jti가 있어 한 번만 교환할 수 있으므로, 교환 때마다 새 토큰이 파일에 있어야 한다.
 """
@@ -9,9 +9,12 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import subprocess
 import threading
 import urllib.parse
 import urllib.request
+from collections.abc import Callable
 from pathlib import Path
 
 FEDERATION_REQUIRED = ("ANTHROPIC_FEDERATION_RULE_ID", "ANTHROPIC_ORGANIZATION_ID", "ANTHROPIC_SERVICE_ACCOUNT_ID")
@@ -38,22 +41,66 @@ def anthropic_config_dir() -> Path:
     return Path.home() / ".config" / "anthropic"
 
 
-def _active_profile() -> str | None:
+def _active_profile() -> tuple[str, str | None] | None:
+    """(활성 프로필 이름, authentication.type)을 돌려준다. 프로필 파일이 없으면 None."""
     cfg = anthropic_config_dir()
     active = cfg / "active_config"
     name = active.read_text(encoding="utf-8").strip() if active.exists() else "default"
-    return name if (cfg / "configs" / f"{name}.json").exists() else None
+    path = cfg / "configs" / f"{name}.json"
+    if not path.exists():
+        return None
+    try:
+        auth_type = json.loads(path.read_text(encoding="utf-8")).get("authentication", {}).get("type")
+    except (OSError, ValueError, AttributeError):
+        auth_type = None
+    return name, auth_type
 
 
-def detect_auth(env: dict[str, str] | None = None) -> tuple[str | None, list[str]]:
+def _sdk_cli() -> str | None:
+    """Agent SDK가 실제로 띄울 Claude Code 바이너리. SDK처럼 번들을 먼저 찾고 없으면 PATH의 claude."""
+    try:
+        import claude_agent_sdk
+
+        bundled = Path(claude_agent_sdk.__file__).parent / "_bundled" / "claude"
+        if bundled.is_file():
+            return str(bundled)
+    except ImportError:
+        pass
+    return shutil.which("claude")
+
+
+def probe_subscription_login(env: dict[str, str]) -> str | None:
+    """`claude auth status --json`으로 /login 구독 로그인을 확인한다. 로그인되어 있으면 요금제 이름을 돌려준다.
+
+    로그아웃 상태면 CLI가 exit 1을 낸다. 실패나 시간 초과는 모두 로그인 없음으로 본다.
+    """
+    cli = _sdk_cli()
+    if cli is None:
+        return None
+    try:
+        proc = subprocess.run([cli, "auth", "status", "--json"], env=env, capture_output=True, text=True, timeout=15)
+        status = json.loads(proc.stdout)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    if proc.returncode != 0 or not status.get("loggedIn") or status.get("authMethod") != "claude.ai":
+        return None
+    return status.get("subscriptionType") or "unknown"
+
+
+def detect_auth(
+    env: dict[str, str] | None = None,
+    probe_login: Callable[[dict[str, str]], str | None] | None = None,
+) -> tuple[str | None, list[str]]:
     """(사용될 인증 수단 설명 또는 None, 경고 목록)을 돌려준다.
 
     순서는 Claude Code 인증 문서의 우선순위를 따른다. 빈 문자열 변수도 자리를 차지하므로 경고한다.
+    /login 구독 로그인은 우선순위가 가장 낮아서, 앞의 수단이 하나도 없을 때만 probe_login으로 확인한다.
     """
     env = dict(os.environ) if env is None else env
+    probe_login = probe_subscription_login if probe_login is None else probe_login
     warnings = [
         f"{k}가 빈 문자열로 설정되어 있다. 빈 값도 우선순위를 차지하니 unset하라"
-        for k in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
+        for k in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN")
         if k in env and not env[k]
     ]
     federation_ready = all(env.get(k) for k in FEDERATION_REQUIRED) and bool(
@@ -62,6 +109,8 @@ def detect_auth(env: dict[str, str] | None = None) -> tuple[str | None, list[str
     key_set = bool(env.get("ANTHROPIC_API_KEY") or env.get("ANTHROPIC_AUTH_TOKEN"))
     if key_set and (federation_ready or env.get("ANTHROPIC_PROFILE")):
         warnings.append("API 키가 설정되어 있어 페더레이션 대신 키가 쓰인다. 페더레이션을 쓰려면 ANTHROPIC_API_KEY를 unset하라")
+    if key_set and env.get("CLAUDE_CODE_OAUTH_TOKEN"):
+        warnings.append("API 키가 설정되어 있어 CLAUDE_CODE_OAUTH_TOKEN(구독) 대신 키가 쓰인다. 구독을 쓰려면 ANTHROPIC_API_KEY를 unset하라")
 
     if any(env.get(k) for k in CLOUD_PROVIDER_VARS):
         return "클라우드 제공자", warnings
@@ -69,6 +118,8 @@ def detect_auth(env: dict[str, str] | None = None) -> tuple[str | None, list[str
         return "ANTHROPIC_AUTH_TOKEN", warnings
     if env.get("ANTHROPIC_API_KEY"):
         return "ANTHROPIC_API_KEY", warnings
+    if env.get("CLAUDE_CODE_OAUTH_TOKEN"):
+        return "CLAUDE_CODE_OAUTH_TOKEN (구독)", warnings
     if env.get("ANTHROPIC_PROFILE"):
         return f"Anthropic 프로필 {env['ANTHROPIC_PROFILE']}", warnings
     if federation_ready:
@@ -78,9 +129,15 @@ def detect_auth(env: dict[str, str] | None = None) -> tuple[str | None, list[str
         if not (env.get("ANTHROPIC_IDENTITY_TOKEN_FILE") or env.get("ANTHROPIC_IDENTITY_TOKEN")):
             missing.append("ANTHROPIC_IDENTITY_TOKEN_FILE 또는 ANTHROPIC_IDENTITY_TOKEN")
         warnings.append(f"페더레이션 변수가 일부만 설정되었다. 빠진 것: {', '.join(missing)}")
+    # 활성 프로필은 oidc_federation이면 /login보다 앞서고, user_oauth면 동작하는 /login 뒤로 밀린다
     profile = _active_profile()
+    if profile and profile[1] != "user_oauth":
+        return f"Anthropic 활성 프로필 {profile[0]}", warnings
+    plan = probe_login(env)
+    if plan:
+        return f"구독 로그인 (claude.ai, {plan})", warnings
     if profile:
-        return f"Anthropic 활성 프로필 {profile}", warnings
+        return f"Anthropic 활성 프로필 {profile[0]}", warnings
     return None, warnings
 
 

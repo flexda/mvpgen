@@ -4,7 +4,7 @@ API 키를 두는 폴더. `claude.env`와 `mvp.env`는 `.gitignore`로 제외되
 
 | 파일 | 용도 | 누가 쓰나 |
 | --- | --- | --- |
-| `claude.env` | `ANTHROPIC_API_KEY` 등 Claude 호출용 인증 | mvpgen 자신 |
+| `claude.env` | `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` 등 Claude 호출용 인증. 구독 로그인을 쓰면 비워 둔다 | mvpgen 자신 |
 | `mvp.env` | 생성될 MVP가 쓸 외부 API 키 | Build 세션, 생성된 앱의 테스트와 실행 |
 
 - `*.example`은 형식 예시다. 실제 값은 넣지 않는다.
