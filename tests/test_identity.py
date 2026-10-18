@@ -11,6 +11,7 @@ import pytest
 from mvpgen.envfiles import app_env
 from mvpgen.guards import check_command
 from mvpgen.identity import GitHubOidcRefresher, detect_auth
+from mvpgen.identity import probe_subscription_login as real_probe  # autouse fixture가 바꾸기 전의 원본
 
 FED = {
     "ANTHROPIC_FEDERATION_RULE_ID": "fdrl_x",
@@ -23,6 +24,8 @@ FED = {
 @pytest.fixture(autouse=True)
 def isolated_config(tmp_path, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_CONFIG_DIR", str(tmp_path / "anthropic"))
+    # 이 기기의 실제 /login 상태가 결과에 끼어들지 않게 한다
+    monkeypatch.setattr("mvpgen.identity.probe_subscription_login", lambda env: None)
 
 
 def test_federation_env_detected():
@@ -63,6 +66,90 @@ def test_active_profile_detected(tmp_path):
 
 def test_nothing_configured():
     assert detect_auth({})[0] is None
+
+
+def test_oauth_token_detected():
+    assert detect_auth({"CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat-x"}) == ("CLAUDE_CODE_OAUTH_TOKEN (구독)", [])
+
+
+def test_api_key_shadows_oauth_token_with_warning():
+    auth, warnings = detect_auth({"CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat-x", "ANTHROPIC_API_KEY": "sk-ant-x"})
+    assert auth == "ANTHROPIC_API_KEY"
+    assert any("CLAUDE_CODE_OAUTH_TOKEN" in w for w in warnings)
+
+
+def test_oauth_token_outranks_federation():
+    assert detect_auth({**FED, "CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat-x"})[0] == "CLAUDE_CODE_OAUTH_TOKEN (구독)"
+
+
+def test_empty_oauth_token_warns():
+    _, warnings = detect_auth({"CLAUDE_CODE_OAUTH_TOKEN": ""})
+    assert any("CLAUDE_CODE_OAUTH_TOKEN" in w and "빈 문자열" in w for w in warnings)
+
+
+def test_subscription_login_is_last_resort():
+    assert detect_auth({}, probe_login=lambda env: "pro")[0] == "구독 로그인 (claude.ai, pro)"
+    called = []
+    detect_auth({"ANTHROPIC_API_KEY": "sk-ant-x"}, probe_login=lambda env: called.append(1) or "pro")
+    assert called == []
+
+
+def _write_profile(tmp_path, auth_type):
+    cfg = tmp_path / "anthropic" / "configs"
+    cfg.mkdir(parents=True)
+    (cfg / "default.json").write_text(json.dumps({"authentication": {"type": auth_type}}))
+
+
+def test_federation_profile_outranks_subscription_login(tmp_path):
+    _write_profile(tmp_path, "oidc_federation")
+    assert detect_auth({}, probe_login=lambda env: "pro")[0] == "Anthropic 활성 프로필 default"
+
+
+def test_user_oauth_profile_ranks_below_subscription_login(tmp_path):
+    _write_profile(tmp_path, "user_oauth")
+    assert detect_auth({}, probe_login=lambda env: "pro")[0] == "구독 로그인 (claude.ai, pro)"
+    assert detect_auth({}, probe_login=lambda env: None)[0] == "Anthropic 활성 프로필 default"
+
+
+@pytest.mark.parametrize(
+    "returncode,stdout,expected",
+    [
+        (0, json.dumps({"loggedIn": True, "authMethod": "claude.ai", "subscriptionType": "pro"}), "pro"),
+        (1, json.dumps({"loggedIn": False, "authMethod": "none"}), None),
+        (0, json.dumps({"loggedIn": True, "authMethod": "api_key"}), None),
+        (0, "not json", None),
+    ],
+)
+def test_probe_parses_auth_status(monkeypatch, returncode, stdout, expected):
+    import subprocess
+
+    from mvpgen import identity
+
+    monkeypatch.setattr(identity, "_sdk_cli", lambda: "/fake/claude")
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, returncode, stdout, ""))
+    assert real_probe({}) == expected
+
+
+def test_probe_timeout_means_no_login(monkeypatch):
+    import subprocess
+
+    from mvpgen import identity
+
+    def boom(*a, **k):
+        raise subprocess.TimeoutExpired("claude", 15)
+
+    monkeypatch.setattr(identity, "_sdk_cli", lambda: "/fake/claude")
+    monkeypatch.setattr(subprocess, "run", boom)
+    assert real_probe({}) is None
+
+
+def test_app_env_strips_oauth_token(monkeypatch):
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "sk-ant-oat-x")
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in app_env({})
+
+
+def test_guard_blocks_oauth_token_access(tmp_path):
+    assert check_command("echo $CLAUDE_CODE_OAUTH_TOKEN", tmp_path)
 
 
 def test_app_env_strips_federation(monkeypatch):

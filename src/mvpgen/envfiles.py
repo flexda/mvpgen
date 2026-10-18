@@ -1,6 +1,6 @@
 """secrets/ 폴더의 KEY=VALUE 파일을 읽는다.
 
-- claude.env: mvpgen 자신이 Claude를 호출할 때 쓰는 인증 정보(API 키 또는 페더레이션 변수). 프로세스 환경변수로 올린다.
+- claude.env: mvpgen 자신이 Claude를 호출할 때 쓰는 인증 정보(API 키, 구독 토큰 또는 페더레이션 변수). 프로세스 환경변수로 올린다.
 - mvp.env: 생성되는 MVP가 쓸 외부 API 키. 이름만 프롬프트에 알리고, 값은 Build 세션과 검증 실행의 환경변수로만 넘긴다.
 """
 
@@ -15,6 +15,7 @@ MVP_FILE = "mvp.env"
 CLAUDE_CRED_KEYS = (
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_AUTH_TOKEN",
+    "CLAUDE_CODE_OAUTH_TOKEN",
     # Workload Identity Federation과 GitHub OIDC 발급 권한도 생성된 앱에는 넘기지 않는다
     "ANTHROPIC_FEDERATION_RULE_ID",
     "ANTHROPIC_ORGANIZATION_ID",

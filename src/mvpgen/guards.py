@@ -17,7 +17,7 @@ DENY_PATTERNS: list[tuple[str, str]] = [
     (r"\bgit\s+push\b", "외부 저장소로 push할 수 없다"),
     (r"\b(shutdown|reboot|halt)\b", "시스템 종료 명령은 금지된다"),
     (r"\bchmod\s+(-\w+\s+)*777\s+/", "시스템 경로 권한 변경은 금지된다"),
-    (r"ANTHROPIC_IDENTITY_TOKEN|ACTIONS_ID_TOKEN_REQUEST", "인증용 ID 토큰에는 접근할 수 없다"),
+    (r"ANTHROPIC_IDENTITY_TOKEN|ACTIONS_ID_TOKEN_REQUEST|CLAUDE_CODE_OAUTH_TOKEN", "인증용 토큰에는 접근할 수 없다"),
 ]
 
 # 쓰기 계열 명령. 이 명령의 인자로 작업 폴더 밖 절대경로가 오면 막는다.

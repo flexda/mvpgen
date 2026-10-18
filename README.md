@@ -12,9 +12,20 @@
 uv sync
 ```
 
-API 키는 `secrets/` 폴더에 넣는다 (git에서 제외됨, 자세한 내용은 `secrets/README.md`).
+Claude 인증은 다음 중 하나를 쓴다. 위에 있는 것이 우선한다 (Claude Code 인증 우선순위와 같다).
 
-- `secrets/claude.env`: `ANTHROPIC_API_KEY=` 뒤에 Claude API 키를 넣는다. 셸에서 `export`한 값이 있으면 그 값이 우선한다.
+| 방법 | 설정 | 비용 |
+| --- | --- | --- |
+| API 키 | `secrets/claude.env`에 `ANTHROPIC_API_KEY` | API 크레딧 |
+| 구독 토큰 | `secrets/claude.env`에 `CLAUDE_CODE_OAUTH_TOKEN` (`claude setup-token`으로 발급) | 구독 한도 |
+| Workload Identity Federation | 아래 절 참고 | API 크레딧 |
+| 구독 로그인 | `secrets/claude.env`를 비워 두고 `claude`를 실행해 `/login` | 구독 한도 |
+
+구독 로그인은 mvpgen이 SDK에 들어 있는 Claude Code로 `claude auth status`를 실행해 확인한다. 구독은 사용 한도에 걸리면 단계 중간에 멈출 수 있다. Agent SDK 문서는 제3자 제품이 claude.ai 로그인을 제공하지 말라고 한다. 본인 실험 용도가 여기에 해당하는지는 미확인이다.
+
+API 키 등은 `secrets/` 폴더에 넣는다 (git에서 제외됨, 자세한 내용은 `secrets/README.md`).
+
+- `secrets/claude.env`: 위 표의 인증 정보를 넣는다. 구독 로그인을 쓰면 비워 둔다. 셸에서 `export`한 값이 있으면 그 값이 우선한다.
 - `secrets/mvp.env`: 생성될 MVP가 쓸 외부 API 키(날씨, 지도 등)를 넣는다. 값을 넣은 키의 서비스만 에이전트가 쓸 수 있다. 비워 두면 외부 API 없이 만든다.
 
 Claude Code를 따로 설치하지 않아도 된다. Agent SDK에 Claude Code 바이너리가 함께 들어 있다.
