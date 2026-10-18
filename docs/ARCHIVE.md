@@ -155,6 +155,24 @@
 | `save-lessons` 잡 (artifact 다운로드, 병합, 커밋) | 미확인. push만 했고 실행은 하지 않았다. 다음 실행에서 확인 |
 | 10분 이상 실행 시 토큰 갱신 | 미확인. 가장 긴 실행이 8.6분 |
 
+## 2026-10-18: Design 단계 추가
+
+1차 구축 이후 처음 더한 기능이다. 전시 추천 사이트를 만들기 전에, 사용자가 "뻔한 전시 추천 사이트처럼 보일 필요는 없다. 의외성을 맡을 창의적 에이전트를 넣자"고 정했다.
+
+| 항목 | 내용 |
+| --- | --- |
+| 흐름 | Plan -> Design -> Build -> 최종 검증. 화면이 없는 CLI형 앱은 건너뜀 |
+| 원천 | `design-library/`: VoltAgent/awesome-design-md(MIT)의 DESIGN.md 84개를 저장소에 복사. 실행 중 네트워크 없음 |
+| 의외성 장치 | 코드가 후보 8개를 무작위로 뽑음(seed 기록). 에이전트는 그 안에서 기준안 1개와 의외안 2개를 내고, gate가 기준안 선택을 막음 |
+| 산출물 | `concepts.json`(방향 3개, 선택 이유), `DESIGN.md`(앱에 맞게 옮긴 디자인 시스템) |
+| 평가 | Design critic 루브릭 5개 항목(의외성, 맥락 번역, 사용성, 구현 가능성, 기능 대응). Build 루브릭 6번에 DESIGN.md 준수 추가 |
+| 옵션 | `--design auto|off|<파일>`, `--design-seed`, `--design-candidates`, `--design-library`. Actions 입력 `design`, `design_seed` |
+| 검증 | 오프라인 테스트 85개 통과. 실제 실행은 아직 하지 않음 |
+
+한계: 루브릭의 대비(WCAG)와 360px 항목은 critic이 문서와 CSS를 읽고 판단하는 것이지 측정이 아니다. Design critic에는 Bash가 없고 Build critic에는 브라우저가 없다. 위 "휴대폰 폭" 문제는 이 변경으로 닫히지 않았고, 실제 확인은 playwright 360px 스크린샷으로 한다.
+
+미확인: critic의 의외성 판정이 안정적인지, Design 단계로 늘어나는 비용이 얼마인지. 첫 실행 뒤 run_report.json으로 확인한다.
+
 ## 커밋
 
 | 시각 | 커밋 |

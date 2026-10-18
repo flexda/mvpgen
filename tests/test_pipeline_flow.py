@@ -6,6 +6,7 @@ import sys
 import mvpgen.pipeline as pipeline_mod
 from mvpgen.agents import AgentRun
 from mvpgen.pipeline import Pipeline, RunConfig
+from mvpgen.design import DESIGN_HEADINGS
 from mvpgen.spec import PRD_HEADINGS
 
 PY = sys.executable
@@ -17,6 +18,16 @@ SERVER = (
     "    def log_message(self, *a): pass\n"
     "http.server.HTTPServer(('127.0.0.1', int(os.environ['PORT'])), H).serve_forever()\n"
 )
+
+
+DESIGN_MD = '---\ncolors:\n  ink: "#111111"\n---\n\n' + "\n\n".join(f"{h}\n" + "내용 " * 120 for h in DESIGN_HEADINGS)
+
+
+def make_library(root, n=5):
+    for i in range(n):
+        (root / f"brand{i}").mkdir(parents=True)
+        (root / f"brand{i}" / "DESIGN.md").write_text(f"# brand{i}")
+    return root
 
 
 def fake_spec():
@@ -37,6 +48,16 @@ def make_fake_agent(calls):
         if stage == "plan":
             (cwd / "spec.json").write_text(json.dumps(fake_spec()))
             (cwd / "PRD.md").write_text("\n\n".join(f"{h}\n" + "내용 " * 40 for h in PRD_HEADINGS))
+        elif stage == "design":
+            # 첫 종료 시도: 산출물이 없어 gate가 막아야 한다
+            first = await gate({"hook_event_name": "Stop", "stop_hook_active": False}, None, None)
+            assert first["decision"] == "block" and "concepts.json" in first["reason"]
+            cands = sorted(p.stem for p in (cwd / "design-candidates").glob("*.md"))
+            dirs = [{"id": i, "kind": k, "sources": [cands[n]], "metaphor": "m", "first_screen": "f", "risks": "r"}
+                    for n, (i, k) in enumerate([("A", "baseline"), ("B", "unexpected"), ("C", "unexpected")])]
+            (cwd / "concepts.json").write_text(json.dumps({"directions": dirs, "chosen": "B", "reason": "의외"}))
+            (cwd / "DESIGN.md").write_text(DESIGN_MD)
+            assert await gate({"hook_event_name": "Stop", "stop_hook_active": True}, None, None) == {}
         elif stage == "build":
             app = cwd / "app"
             (app / "server.py").write_text(SERVER)
@@ -186,3 +207,80 @@ async def test_api_error_aborts_with_real_message(tmp_path, monkeypatch):
     report = json.loads((run_dir / "run_report.json").read_text())
     assert "Credit balance is too low" in report["error"]
     assert calls == ["plan"]
+
+
+async def test_design_auto_runs_between_plan_and_build(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(pipeline_mod, "run_agent", make_fake_agent(calls))
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    config = RunConfig(idea="할 일 목록", out_dir=tmp_path, budget_usd=5, design="auto",
+                       design_library=make_library(tmp_path / "lib"), design_candidates=3, design_seed=7)
+
+    assert await Pipeline(config, run_dir).run() is True
+
+    stages = [c[0] for c in calls]
+    assert stages == ["plan", "plan-critic", "plan", "plan-critic", "design", "design-critic", "build", "build-critic"]
+    report = json.loads((run_dir / "run_report.json").read_text())
+    assert report["design"]["seed"] == 7 and len(report["design"]["candidates"]) == 3
+    assert report["stages"]["design"]["status"] == "passed"
+    # 후보 목록이 Design 프롬프트에, DESIGN.md 안내가 Build와 Build critic 프롬프트에 들어가야 한다
+    design_prompt = next(p for s, p in calls if s == "design")
+    assert all(c in design_prompt for c in report["design"]["candidates"])
+    assert "DESIGN.md" in next(p for s, p in calls if s == "build")
+    assert "DESIGN.md" in next(p for s, p in calls if s == "build-critic")
+    assert "- design: passed" in (run_dir / "README.md").read_text()
+
+
+async def test_design_resume_keeps_candidates(tmp_path, monkeypatch):
+    monkeypatch.setattr(pipeline_mod, "run_agent", make_fake_agent([]))
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    lib = make_library(tmp_path / "lib", n=10)
+    config = RunConfig(idea="x", out_dir=tmp_path, budget_usd=5, design="auto", design_library=lib, design_candidates=3)
+    pipe = Pipeline(config, run_dir)
+    pipe.state["design"] = {"seed": 1, "candidates": ["brand2", "brand5", "brand9"]}
+    pipe._save()
+
+    assert await pipe.run() is True
+    assert sorted(p.stem for p in (run_dir / "design-candidates").glob("*.md")) == ["brand2", "brand5", "brand9"]
+
+
+async def test_design_provided_file_skips_agent(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(pipeline_mod, "run_agent", make_fake_agent(calls))
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    chosen = tmp_path / "mine.md"
+    chosen.write_text("# 내가 고른 디자인")
+    config = RunConfig(idea="x", out_dir=tmp_path, budget_usd=5, design=str(chosen))
+
+    assert await Pipeline(config, run_dir).run() is True
+    assert "design" not in [c[0] for c in calls]
+    assert (run_dir / "DESIGN.md").read_text() == "# 내가 고른 디자인"
+    report = json.loads((run_dir / "run_report.json").read_text())
+    assert report["stages"]["design"]["status"] == "provided"
+    assert "DESIGN.md" in next(p for s, p in calls if s == "build")
+
+
+async def test_design_skipped_for_cli_app(tmp_path, monkeypatch):
+    calls = []
+    base = make_fake_agent(calls)
+
+    async def cli_plan(**kw):
+        run = await base(**kw)
+        if kw["stage"] == "plan":
+            spec = json.loads((kw["cwd"] / "spec.json").read_text())
+            spec["smoke"] = {"command": "echo Fake Todo", "expect": "Fake Todo"}
+            (kw["cwd"] / "spec.json").write_text(json.dumps(spec))
+        return run
+
+    monkeypatch.setattr(pipeline_mod, "run_agent", cli_plan)
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    config = RunConfig(idea="x", out_dir=tmp_path, budget_usd=5, design="auto", design_library=make_library(tmp_path / "lib"))
+
+    await Pipeline(config, run_dir).run()
+    assert "design" not in [c[0] for c in calls]
+    state = json.loads((run_dir / "state.json").read_text())
+    assert state["stages"]["design"]["status"] == "skipped"

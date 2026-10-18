@@ -89,6 +89,25 @@ uv run mvpgen "오늘 뭐하지: 전시 정보를 모아 오늘 볼 만한 전�
 - 숨김 파일은 빼고, 전체 5MB까지 받는다.
 - Actions에서는 자료를 저장소에 커밋하고 `-f context=contexts/today-exhibitions`처럼 저장소 안 경로를 넘긴다.
 
+### 디자인 (`--design`)
+
+웹앱이면 Plan과 Build 사이에 Design 단계가 돈다. 목표는 그 분야에서 흔한 화면이 아니라 의외성 있는 화면이다.
+
+```bash
+uv run mvpgen "..."                                   # 기본 auto
+uv run mvpgen "..." --design-seed 42                  # 같은 후보로 다시 실행
+uv run mvpgen "..." --design design-library/wired/DESIGN.md   # 고른 DESIGN.md를 그대로 쓴다
+uv run mvpgen "..." --design off                      # Design 단계를 끈다
+```
+
+- 원천은 `design-library/`다. [VoltAgent/awesome-design-md](https://github.com/VoltAgent/awesome-design-md)(MIT)의 브랜드별 DESIGN.md를 복사해 두었고, 실행 중에는 네트워크를 쓰지 않는다. 갱신은 `uv run python scripts/sync_design_library.py`로 한다. 출처 커밋은 `design-library/SOURCE.md`에 있다.
+- auto에서는 파이프라인이 라이브러리에서 후보를 무작위로 `--design-candidates`개(기본 8개) 뽑아 `design-candidates/`에 둔다. seed는 `state.json`과 `run_report.json`의 `design`에 남는다. LLM에게 고르게만 하면 매번 비슷한 선택으로 수렴하기 때문에, 무작위 추출은 코드가 맡는다.
+- Design 에이전트는 후보 안에서 방향 3개를 `concepts.json`에 적는다. 분야에 맞는 기준안(baseline) 1개와, 분야가 다른 디자인 언어를 옮긴 의외안(unexpected) 2개다. 그중 의외안 하나를 골라 이 앱에 맞게 옮긴 `DESIGN.md`를 쓴다.
+- Stop gate는 다음을 검사한다. 방향이 3개(기준안 1, 의외안 2)인지, 원천이 후보 안에 있는지, 기준안을 고르지 않았는지, DESIGN.md에 프런트매터 colors 토큰과 필수 제목이 있는지. critic은 의외성, 맥락 번역, 사용성(대비, 360px), 구현 가능성, 기능 대응으로 채점한다.
+- Build는 DESIGN.md의 토큰과 레이아웃을 따르고, Build critic은 CSS가 그것을 따랐는지 본다.
+- 화면이 없는 CLI형 앱(spec에 `smoke.command`)이면 건너뛴다.
+- Actions에서는 `-f design=auto|off|<저장소 안 경로>`, `-f design_seed=42`로 넘긴다.
+
 결과는 `workspace/<slug>/`에 생긴다.
 
 ```
@@ -96,6 +115,9 @@ lessons.md              # 저장소에 커밋된 교훈 파일 (--lessons로 경
 workspace/
   <slug>/
     PRD.md, spec.json   # Plan 단계 산출물
+    design-candidates/  # 이번 실행에 뽑힌 디자인 후보 (design auto)
+    concepts.json       # 디자인 방향 3개와 선택 이유
+    DESIGN.md           # Build가 따르는 디자인 시스템
     app/                # 생성된 앱
     reviews/            # 라운드별 critic 평가
     snapshots/          # 라운드별 산출물 (점수가 떨어지면 되돌릴 때 쓴다)
@@ -107,18 +129,18 @@ workspace/
 
 ## 동작 방식
 
-Python 오케스트레이터가 Plan, Build, 최종 검증, 리포트 순서로 진행한다. 각 단계는 별도의 `query()` 세션이고, 결과는 파일로 넘긴다.
+Python 오케스트레이터가 Plan, Design, Build, 최종 검증, 리포트 순서로 진행한다. 각 단계는 별도의 `query()` 세션이고, 결과는 파일로 넘긴다.
 
 검증 루프는 세 가지다.
 
-1. **Stop hook 게이트 (세션 안):** 에이전트가 끝내려 할 때마다 검사기가 돈다. Plan 단계는 spec 스키마, 의도 대응표(`intent`: 아이디어의 요구마다 담당 feature 연결)와 PRD 제목을, Build 단계는 install, test, 실행과 smoke를 검사한다. 실패하면 `{"decision": "block"}`으로 종료를 막고 실패 로그를 전달해 같은 세션에서 고치게 한다. 세션당 최대 `--max-gate-blocks`회까지 막는다.
+1. **Stop hook 게이트 (세션 안):** 에이전트가 끝내려 할 때마다 검사기가 돈다. Plan 단계는 spec 스키마, 의도 대응표(`intent`: 아이디어의 요구마다 담당 feature 연결)와 PRD 제목을, Design 단계는 concepts.json 구조와 DESIGN.md 형식을, Build 단계는 install, test, 실행과 smoke를 검사한다. 실패하면 `{"decision": "block"}`으로 종료를 막고 실패 로그를 전달해 같은 세션에서 고치게 한다. 세션당 최대 `--max-gate-blocks`회까지 막는다.
 2. **독립 critic (세션 밖):** 검사를 통과하면 맥락을 공유하지 않는 새 세션이 루브릭으로 채점해 `reviews/*.json`을 쓴다. Plan critic은 아이디어 원문을 직접 요구 단위로 나눠 `intent`와 대조하고, 빠진 요구는 critical로 본다. 80점 미만이거나 critical issue가 있으면 지적 사항을 넘겨 다시 만들게 하고, `--max-review-rounds`회까지 반복한다. 점수가 직전 최고점보다 떨어지면 최고점 라운드의 산출물로 되돌린다.
 3. **lessons.md (실행 사이):** major 이상의 지적을 저장소 루트의 `lessons.md`에 누적하고, 다음 실행 때 같은 단계의 시스템 프롬프트에 최근 20개를 넣는다. 로컬 실행과 Actions가 같은 파일을 쓴다. Actions에서는 실행이 끝나면 `save-lessons` 잡이 새 항목을 최신 main의 `lessons.md`에 합쳐 커밋한다(새 항목이 없으면 커밋하지 않는다). 쓰기 권한은 에이전트가 돌지 않는 이 잡에만 있다. 그래서 Actions 실행 뒤에는 로컬에서 `git pull`을 먼저 한다.
 
 ### 안전장치
 
 - 단계마다 쓸 수 있는 도구를 `tools`로 제한하고 `permission_mode="dontAsk"`로 실행한다. 목록 밖 도구는 묻지 않고 거부된다.
-- PreToolUse hook이 `sudo`, `curl | sh`, `git push`, 작업 폴더 밖 쓰기를 막는다. 쓸 수 있는 위치도 단계마다 다르다. Plan은 `PRD.md`와 `spec.json`, Build는 `app/`, critic은 자기 review 파일에만 쓴다.
+- PreToolUse hook이 `sudo`, `curl | sh`, `git push`, 작업 폴더 밖 쓰기를 막는다. 쓸 수 있는 위치도 단계마다 다르다. Plan은 `PRD.md`와 `spec.json`, Design은 `concepts.json`과 `DESIGN.md`, Build는 `app/`, critic은 자기 review 파일에만 쓴다.
 - `setting_sources=[]`로 사용자와 프로젝트의 Claude Code 설정을 읽지 않는다.
 - `--budget`(기본 $10)을 넘으면 중단한다. 비용은 SDK가 계산한 클라이언트 측 추정치다.
 
@@ -144,4 +166,5 @@ API를 호출하지 않는다. `tests/test_pipeline_flow.py`는 SDK 호출을 �
 | `critic.py` | review 스키마, 합격 판정, 스냅샷과 롤백 |
 | `lessons.py` | 실행 간 교훈 누적 |
 | `context.py` | 참고 자료 폴더 복사와 비밀값 검사 |
+| `design.py` | 디자인 후보 무작위 추출, concepts.json과 DESIGN.md 검사 |
 | `prompts.py`, `rubrics.py` | 프롬프트와 루브릭 |

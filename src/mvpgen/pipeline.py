@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import random
 import re
+import shutil
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -14,15 +16,18 @@ from mvpgen import prompts
 from mvpgen.agents import AgentRun, run_agent
 from mvpgen.context import list_context
 from mvpgen.critic import RoundTracker, Review, check_review_file, is_accepted, load_review
+from mvpgen.design import check_design, copy_candidates, list_library, pick_candidates
 from mvpgen.gates import StopGate
 from mvpgen.lessons import lessons_prompt, record_lessons
-from mvpgen.rubrics import BUILD_RUBRIC, PLAN_RUBRIC
+from mvpgen.rubrics import BUILD_RUBRIC, DESIGN_RUBRIC, PLAN_RUBRIC
 from mvpgen.spec import Spec, check_plan, load_spec
 from mvpgen.verify import free_port, verify_app
 
 GEN_TOOLS_PLAN = ["Read", "Write", "Edit", "Glob"]
+GEN_TOOLS_DESIGN = ["Read", "Write", "Edit", "Glob", "Grep"]
 GEN_TOOLS_BUILD = ["Read", "Write", "Edit", "Glob", "Grep", "Bash"]
 CRITIC_TOOLS_PLAN = ["Read", "Glob", "Grep", "Write"]
+CRITIC_TOOLS_DESIGN = ["Read", "Glob", "Grep", "Write"]
 CRITIC_TOOLS_BUILD = ["Read", "Glob", "Grep", "Write", "Bash"]
 
 
@@ -50,12 +55,18 @@ class RunConfig:
     max_fix_rounds: int = 2
     pass_threshold: int = 80
     plan_max_turns: int = 30
+    design_max_turns: int = 60
     build_max_turns: int = 150
     critic_max_turns: int = 60
     protected_paths: list[Path] = field(default_factory=list)
     mvp_env: dict[str, str] = field(default_factory=dict)
     # 실행 간 교훈 파일. 없으면 out_dir/lessons.md
     lessons_path: Path | None = None
+    # off: Design 단계 없음, auto: 라이브러리에서 무작위 후보를 뽑아 Design 에이전트가 방향을 정함, 그 밖: 그대로 쓸 DESIGN.md 경로
+    design: str = "off"
+    design_library: Path | None = None
+    design_candidates: int = 8
+    design_seed: int | None = None
 
 
 def make_slug(idea: str, now: datetime | None = None) -> str:
@@ -185,6 +196,10 @@ class Pipeline:
         problems = check_plan(self.run_dir)
         return (not problems), ("\n".join(f"- {p}" for p in problems) or "Plan 검사 통과")
 
+    def _design_check(self) -> tuple[bool, str]:
+        problems = check_design(self.run_dir, self.state["design"]["candidates"])
+        return (not problems), ("\n".join(f"- {p}" for p in problems) or "Design 검사 통과")
+
     def _build_check(self) -> tuple[bool, str]:
         result = verify_app(self.app_dir, load_spec(self.run_dir / "spec.json"), extra_env=self.config.mvp_env)
         return result.ok, result.report()
@@ -235,7 +250,8 @@ class Pipeline:
                 round_no=round_no,
                 system_prompt=prompts.CRITIC_SYSTEM,
                 prompt=prompts.critic_prompt(stage, self.config.idea, rubric, review_rel, port,
-                                          has_context=bool(list_context(self.run_dir))),
+                                          has_context=bool(list_context(self.run_dir)),
+                                          has_design=(self.run_dir / "DESIGN.md").exists()),
                 tools=critic_tools,
                 writable=[review_path],
                 max_turns=self.config.critic_max_turns,
@@ -297,6 +313,56 @@ class Pipeline:
             rubric=PLAN_RUBRIC, critic_tools=CRITIC_TOOLS_PLAN, critic_port=False,
         )
 
+    async def design(self) -> None:
+        info = self._stage("design")
+        if info["status"] in {"passed", "passed_with_issues", "provided", "skipped"}:
+            print(f"design: 이전 실행 결과를 사용한다 ({info['status']})")
+            return
+        mode = self.config.design
+        spec = load_spec(self.run_dir / "spec.json")
+        if mode == "off" or spec.smoke.url is None:
+            # CLI형 앱은 화면이 없으므로 디자인 단계를 건너뛴다
+            info["status"] = "skipped"
+            self._save()
+            print("\n== design: 건너뜀" + ("" if mode == "off" else " (화면이 없는 앱)"), flush=True)
+            return
+        if mode != "auto":
+            shutil.copyfile(Path(mode), self.run_dir / "DESIGN.md")
+            info["status"] = "provided"
+            info["source"] = str(mode)
+            self._save()
+            print(f"\n== design: 지정한 DESIGN.md를 쓴다 ({mode})", flush=True)
+            return
+
+        library = self.config.design_library
+        if library is None or not list_library(library):
+            raise StageFailed(f"디자인 라이브러리에 DESIGN.md가 없다: {library}")
+        picked = self.state.get("design")
+        if picked is None:
+            # --resume에서도 같은 후보를 쓰도록 seed와 후보를 state에 남긴다
+            seed = self.config.design_seed if self.config.design_seed is not None else random.SystemRandom().randrange(2**31)
+            picked = {"seed": seed, "candidates": pick_candidates(library, self.config.design_candidates, seed)}
+            self.state["design"] = picked
+            self._save()
+        copy_candidates(library, picked["candidates"], self.run_dir)
+        print(f"\n== design 후보 (seed {picked['seed']}): {', '.join(picked['candidates'])}", flush=True)
+
+        system = prompts.DESIGN_SYSTEM + lessons_prompt(self.lessons_path, "design")
+        writable = [self.run_dir / "concepts.json", self.run_dir / "DESIGN.md"]
+
+        async def generate(feedback: str | None, round_no: int) -> None:
+            gate = StopGate("Design", self._design_check, self.config.max_gate_blocks)
+            await self._agent(
+                stage="design", round_no=round_no, system_prompt=system,
+                prompt=prompts.design_prompt(self.config.idea, picked["candidates"], feedback, list_context(self.run_dir)),
+                tools=GEN_TOOLS_DESIGN, writable=writable, max_turns=self.config.design_max_turns, gate=gate,
+            )
+
+        await self._review_loop(
+            stage="design", paths=writable, generate=generate, check=self._design_check, fix=None,
+            rubric=DESIGN_RUBRIC, critic_tools=CRITIC_TOOLS_DESIGN, critic_port=False,
+        )
+
     async def build(self) -> None:
         if self._stage("build")["status"] in {"passed", "passed_with_issues"}:
             print("build: 이전 실행 결과를 사용한다")
@@ -310,7 +376,9 @@ class Pipeline:
             gate = StopGate("Build", self._build_check, self.config.max_gate_blocks)
             await self._agent(
                 stage="build", round_no=round_no, system_prompt=system,
-                prompt=prompts.build_prompt(spec, feedback, list_context(self.run_dir)),
+                prompt=prompts.build_prompt(spec, feedback, list_context(self.run_dir),
+                                            has_design=(self.run_dir / "DESIGN.md").exists(),
+                                            has_concepts=(self.run_dir / "concepts.json").exists()),
                 tools=GEN_TOOLS_BUILD, writable=[self.app_dir], max_turns=self.config.build_max_turns, gate=gate,
             )
 
@@ -361,6 +429,7 @@ class Pipeline:
             "stages": stages,
             "runs": self.state["runs"],
             "spec": spec.model_dump() if spec else None,
+            "design": self.state.get("design"),
         }
         report_path = self.run_dir / "run_report.json"
         report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -374,6 +443,7 @@ class Pipeline:
             await self.plan()
             # Plan 루프가 최고점 라운드로 되돌린 뒤의 최종 spec.name을 쓴다. --resume에서 plan을 건너뛰어도 여기를 지난다
             self.rename_after_plan()
+            await self.design()
             await self.build()
             self.final_verify()
         except (BudgetExceeded, StageFailed, AgentAborted) as e:
@@ -398,9 +468,12 @@ def _readme(idea: str, spec: Spec | None, stages: dict[str, Any], cost: float, s
         lines += ["export PORT=8000", spec.run_cmd, "```", "", "테스트: `" + spec.test_cmd + "`", "", "## 기능", ""]
         lines += [f"- {f.id} {f.title}: {f.description}" for f in spec.features]
     lines += ["", "## 검증 기록", ""]
-    for name in ("plan", "build"):
+    for name in ("plan", "design", "build"):
         st = stages.get(name)
-        if st:
+        if st and not st.get("rounds"):
+            # design이 skipped나 provided면 critic 라운드가 없다
+            lines.append(f"- {name}: {st['status']}")
+        elif st:
             scores = ", ".join(f"r{r['round']} {r['score']}점" for r in st.get("rounds", []))
             lines.append(f"- {name}: {st['status']} ({scores})")
     if "verify" in stages:
