@@ -30,6 +30,10 @@ def generate(
     secrets: Annotated[Path, typer.Option(help="claude.env, mvp.env가 있는 폴더")] = Path("secrets"),
     lessons: Annotated[Path, typer.Option(help="실행 간 교훈 파일. 저장소에 커밋해 로컬과 Actions가 함께 쓴다")] = Path("lessons.md"),
     context: Annotated[Path | None, typer.Option(help="미리 조사한 참고 자료 폴더. 결과 폴더의 context/로 복사해 Plan과 Build가 읽는다")] = None,
+    design: Annotated[str, typer.Option(help="auto: 라이브러리에서 무작위 후보를 뽑아 의외의 디자인 방향을 정한다, off: 끈다, 파일 경로: 그 DESIGN.md를 그대로 쓴다")] = "auto",
+    design_library: Annotated[Path, typer.Option(help="DESIGN.md 라이브러리 폴더 (<brand>/DESIGN.md)")] = Path("design-library"),
+    design_candidates: Annotated[int, typer.Option(help="design auto에서 무작위로 뽑을 후보 수")] = 8,
+    design_seed: Annotated[int | None, typer.Option(help="후보 추출 seed. 비우면 무작위이며 state.json에 기록된다")] = None,
     gha_oidc: Annotated[bool, typer.Option(help="GitHub Actions에서 OIDC 토큰을 자동으로 받아 갱신")] = True,
     oidc_audience: Annotated[str, typer.Option(help="GitHub OIDC 토큰의 audience (federation 규칙과 같아야 함)")] = DEFAULT_AUDIENCE,
 ) -> None:
@@ -86,6 +90,13 @@ def generate(
         protected.append(Path(os.environ["ANTHROPIC_IDENTITY_TOKEN_FILE"]).expanduser())
 
     assert idea is not None
+    if design not in {"auto", "off"}:
+        design_path = Path(design).expanduser().resolve()
+        if not design_path.is_file():
+            raise typer.BadParameter(f"{design}는 auto, off 또는 DESIGN.md 파일 경로여야 한다", param_hint="--design")
+        design = str(design_path)
+    elif design == "auto" and not design_library.is_dir():
+        raise typer.BadParameter(f"{design_library} 폴더가 없다. scripts/sync_design_library.py로 받거나 --design off", param_hint="--design-library")
     run_dir.mkdir(parents=True, exist_ok=True)
     if context is not None:
         from mvpgen.context import ContextError, copy_context
@@ -100,8 +111,11 @@ def generate(
         max_review_rounds=max_review_rounds, max_gate_blocks=max_gate_blocks,
         max_fix_rounds=max_fix_rounds, pass_threshold=pass_threshold,
         protected_paths=protected, mvp_env=mvp_env, lessons_path=lessons.resolve(),
+        design=design, design_library=design_library.resolve(), design_candidates=design_candidates,
+        design_seed=design_seed,
     )
     typer.echo(f"아이디어: {idea}\n폴더: {run_dir}\n모델: {model} (effort {effort}), 예산 ${budget:.2f}")
+    typer.echo(f"디자인: {design}")
     typer.echo(f"Claude 인증: {auth}")
     typer.echo(f"MVP용 키: {', '.join(sorted(mvp_env)) or '없음'}")
     try:
