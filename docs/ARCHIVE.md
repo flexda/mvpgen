@@ -196,12 +196,14 @@ PR #1을 main에 병합(`69c9be6`)한 뒤 같은 입력으로 두 번 실행했�
 
 ### 실행 결과
 
-| run | seed | 멈춘 곳 | Plan | Design | Build | 비용 | 시간 |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| [39113592446](https://github.com/flexda/mvpgen/actions/runs/39113592446) | 339168898 (자동) | Design critic | 84, 통과 | 생성만(gate block 0), 채점 없음 | 시작 안 함 | $2.10 | 10분 |
-| [39119897521](https://github.com/flexda/mvpgen/actions/runs/39119897521) | 339168898 (지정) | Build critic | 72 불합격 -> 90 통과 | 87, 통과(critical 0, minor 6) | 생성, 42턴, 앱 테스트 29개 통과(로컬) | $5.53 | 21분 |
+| run | 코드 | seed | 멈춘 곳 | Plan | Design | Build | 비용 | 시간 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| [39113592446](https://github.com/flexda/mvpgen/actions/runs/39113592446) | `69c9be6` Design 단계 병합 직후 | 339168898 (자동) | Design critic | 84, 통과 | 생성만(gate block 0), 채점 없음 | 시작 안 함 | $2.10 | 10분 |
+| [39119897521](https://github.com/flexda/mvpgen/actions/runs/39119897521) | `ba75084` 위와 같은 코드, lessons.md 1개 추가 | 339168898 (지정) | Build critic | 72 불합격 -> 90 통과 | 87, 통과(critical 0, minor 6) | 생성, 42턴, 앱 테스트 29개 통과(로컬) | $5.53 | 21분 |
 
 단계별 비용(2차): Plan $1.79(2라운드), Design $1.50, Build $1.79. Design 단계는 실행 비용의 약 27%를 차지했다.
+
+다음 실험의 기준선: 코드 `69c9be6`, seed 339168898. 2차 실행 뒤 `save-lessons`가 교훈 1개를 더 넣었다(`172d3f3`). 그래서 다음 실행은 lessons.md 조건이 이번과 다르다.
 
 로컬 사본: `workspace/ci-39113592446/`, `workspace/ci-39119897521/`(git 제외). 2차 폴더의 `screenshots/`에 데스크톱 1280px과 360px 화면이 있다.
 
