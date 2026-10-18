@@ -1,7 +1,27 @@
 import json
 from datetime import datetime
 
-from mvpgen.pipeline import find_run_dir, make_slug, name_slug
+import pytest
+
+from mvpgen.pipeline import find_run_dir, make_slug, model_for, name_slug, parse_stage_models
+
+
+def test_model_for_resolution():
+    m = {"build": "b", "critic": "c", "design-critic": "dc"}
+    assert model_for("plan", m, "d") == "d"
+    assert model_for("build", m, "d") == "b"
+    assert model_for("build-fix2", m, "d") == "b"
+    assert model_for("plan-critic", m, "d") == "c"
+    assert model_for("design-critic", m, "d") == "dc"
+    assert model_for("build-critic", {}, "d") == "d"
+
+
+def test_parse_stage_models():
+    assert parse_stage_models(["plan=claude-sonnet-5-5", " critic = claude-haiku-5-5 "]) == {
+        "plan": "claude-sonnet-5-5", "critic": "claude-haiku-5-5"}
+    for bad in (["plan"], ["plan="], ["deploy=x"], ["plan=a", "plan=b"]):
+        with pytest.raises(ValueError):
+            parse_stage_models(bad)
 
 
 def test_slug_uses_ascii_words():

@@ -86,6 +86,24 @@ uv run mvpgen --resume 20261012-153000-simple-memo   # 중단된 실행 이어�
 
 `--resume`에는 Plan 뒤에 바뀌기 전의 `-mvp` 이름을 줘도 바뀐 폴더를 찾아 이어 간다.
 
+### 단계별 모델 (`--stage-model`)
+
+`--model`은 모든 단계의 기본 모델이다. 단계마다 다른 모델을 쓰려면 `--stage-model STAGE=MODEL`을 여러 번 준다.
+
+```bash
+uv run mvpgen "..." --model claude-opus-5-5 --stage-model plan=claude-sonnet-5-5 --stage-model critic=claude-sonnet-5-5
+```
+
+| STAGE | 적용되는 세션 |
+| --- | --- |
+| `plan`, `design`, `build` | 그 단계의 생성 세션. `build`는 수정 세션(build-fix)에도 적용된다 |
+| `critic` | 세 critic 모두 |
+| `plan-critic`, `design-critic`, `build-critic` | 그 critic만. `critic`보다 우선한다 |
+
+- 지정하지 않은 단계는 `--model`을 쓴다. effort는 모든 단계가 `--effort` 하나를 쓴다.
+- 세션마다 실제로 쓴 모델은 `state.json`과 `run_report.json`의 `runs[].model`에, 지정값은 `stage_models`에 남는다.
+- `--resume` 때는 새로 준 `--stage-model`이 남은 단계에 적용된다.
+
 ### 참고 자료 넘기기 (`--context`)
 
 미리 조사한 자료(API 문서, 수집해 둔 CSV/JSON, 수집 스크립트)가 있으면 폴더째 넘긴다.

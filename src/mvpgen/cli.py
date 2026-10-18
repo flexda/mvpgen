@@ -20,6 +20,10 @@ def generate(
     idea: Annotated[str | None, typer.Argument(help="만들 MVP 아이디어 한 줄")] = None,
     out: Annotated[Path, typer.Option(help="결과를 저장할 폴더")] = Path("workspace"),
     model: Annotated[str, typer.Option(help="사용할 Claude 모델")] = "claude-opus-5-5",
+    stage_model: Annotated[list[str] | None, typer.Option(
+        help="단계별 모델 STAGE=MODEL, 여러 번 지정 가능. STAGE: plan, design, build, critic(모든 critic), "
+             "plan-critic, design-critic, build-critic. 지정하지 않은 단계는 --model"
+    )] = None,
     effort: Annotated[str, typer.Option(help="low, medium, high, xhigh, max")] = "high",
     budget: Annotated[float, typer.Option(help="전체 비용 상한(USD, SDK 추정치 기준)")] = 10.0,
     max_review_rounds: Annotated[int, typer.Option(help="단계별 critic 불합격 후 개정 횟수")] = 2,
@@ -39,7 +43,12 @@ def generate(
 ) -> None:
     from mvpgen.envfiles import load_claude_env, load_mvp_env
     from mvpgen.identity import GitHubOidcRefresher, anthropic_config_dir, detect_auth
-    from mvpgen.pipeline import Pipeline, RunConfig, find_run_dir, make_slug
+    from mvpgen.pipeline import Pipeline, RunConfig, find_run_dir, make_slug, parse_stage_models
+
+    try:
+        stage_models = parse_stage_models(stage_model or [])
+    except ValueError as e:
+        raise typer.BadParameter(str(e), param_hint="--stage-model") from e
 
     out = out.resolve()
     secrets = secrets.resolve()
@@ -109,7 +118,7 @@ def generate(
             raise typer.BadParameter(str(e), param_hint="--context") from e
         typer.echo(f"참고 자료: {context} -> {copied}")
     config = RunConfig(
-        idea=idea, out_dir=out, model=model, effort=effort, budget_usd=budget,
+        idea=idea, out_dir=out, model=model, stage_models=stage_models, effort=effort, budget_usd=budget,
         max_review_rounds=max_review_rounds, max_gate_blocks=max_gate_blocks,
         max_fix_rounds=max_fix_rounds, pass_threshold=pass_threshold,
         protected_paths=protected, mvp_env=mvp_env, lessons_path=lessons.resolve(),
@@ -117,6 +126,8 @@ def generate(
         design_seed=design_seed,
     )
     typer.echo(f"아이디어: {idea}\n폴더: {run_dir}\n모델: {model} (effort {effort}), 예산 ${budget:.2f}")
+    if stage_models:
+        typer.echo("단계별 모델: " + ", ".join(f"{k}={v}" for k, v in stage_models.items()))
     typer.echo(f"디자인: {design}")
     typer.echo(f"Claude 인증: {auth}")
     typer.echo(f"MVP용 키: {', '.join(sorted(mvp_env)) or '없음'}")
