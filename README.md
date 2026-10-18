@@ -100,7 +100,24 @@ uv run mvpgen "..." --model claude-opus-5-5 --stage-model plan=claude-sonnet-5-5
 | `critic` | 세 critic 모두 |
 | `plan-critic`, `design-critic`, `build-critic` | 그 critic만. `critic`보다 우선한다 |
 
-- 지정하지 않은 단계는 `--model`을 쓴다. effort는 모든 단계가 `--effort` 하나를 쓴다.
+추천 조합 (2026-10-18, 실험 전 가설). 토큰을 가장 많이 쓰는 Build 생성은 Sonnet으로 내리고, 결과를 판정하는 build-critic과 앞단의 Plan, Design은 Opus로 둔다. 만드는 모델과 마지막 판정 모델을 다르게 해서 자기 결과를 후하게 보는 경향을 줄인다.
+
+| 세션 | 모델 | 이유 |
+| --- | --- | --- |
+| plan | `claude-opus-5-5` | spec이 이후 모든 단계를 정한다. 토큰은 적다 |
+| plan-critic | `claude-sonnet-5-5` | 문서 대조 위주 |
+| design | `claude-opus-5-5` | 의외안을 만드는 판단 |
+| design-critic | `claude-sonnet-5-5` | 루브릭 대조 위주 |
+| build, build-fix | `claude-sonnet-5-5` | 턴과 토큰이 가장 많은 코딩 작업 |
+| build-critic | `claude-opus-5-5` | 앱을 실행해 보고 최종 판정 |
+
+```bash
+uv run mvpgen "..." --model claude-opus-5-5 \
+  --stage-model critic=claude-sonnet-5-5 --stage-model build-critic=claude-opus-5-5 \
+  --stage-model build=claude-sonnet-5-5
+```
+
+- 지정하지 않은 단계는 `--model`을 쓴다. effort는 모든 단계가 `--effort` 하나를 쓴다. 세 모델 모두 `low`부터 `max`까지 지원한다.
 - 세션마다 실제로 쓴 모델은 `state.json`과 `run_report.json`의 `runs[].model`에, 지정값은 `stage_models`에 남는다.
 - `--resume` 때는 새로 준 `--stage-model`이 남은 단계에 적용된다.
 
