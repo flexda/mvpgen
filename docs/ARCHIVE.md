@@ -24,6 +24,8 @@
 | Actions 인증 비용 (2026-10-18) | WIF와 API 크레딧을 유지하고 크레딧을 충전 | 사용자 선택. Pro 구독 토큰(`CLAUDE_CODE_OAUTH_TOKEN`)으로 바꾸는 안을 검토했다 |
 | 인증 선택지 안내 (2026-10-18) | 인증, 실행 위치, 비용 설계 전에 구독과 API 방식 선택지를 비용과 함께 먼저 안내한다 | 10-12 설계 때 API 키만 안내돼 구독 사용 가능성을 몰랐다(아래 "인증 설계에서 빠진 안내") |
 | 실행 결과 보관 (2026-10-18) | Actions artifact를 `workspace/ci-<run>/`에 내려받고 스크린샷을 함께 둔다 | 기존 실행과 같은 위치. artifact는 14일 뒤 지워진다 |
+| 구독 인증 인정 (2026-10-18) | `detect_auth()`가 `/login` 구독 로그인과 `CLAUDE_CODE_OAUTH_TOKEN`을 인정한다. 우선순위는 Claude Code 인증 문서를 따른다 | 로컬에서 API 크레딧 없이 실험하기 위해. PR #4 |
+| 단계별 모델 (2026-10-18) | `--stage-model STAGE=MODEL`로 plan, design, build, critic별 모델을 정한다. 기본값은 바꾸지 않는다 | 사용자 요청. 기본값을 바꾸면 전부 Opus인 기준선과 비교할 수 없다. PR #5 |
 
 ## 구조
 
@@ -263,6 +265,58 @@ PR #1을 main에 병합(`69c9be6`)한 뒤 같은 입력으로 두 번 실행했�
 | 재발 방지 | Claude memory `auth-options-briefing`: 인증, 실행 위치, 비용을 정하기 전에 선택지 표를 먼저 안내한다. SDK 문서의 "제3자 제품은 claude.ai 로그인을 제공하지 말라"는 주의와, 본인 학습용 해당 여부가 미확인이라는 점도 함께 알린다 |
 | 다음 할 일 후보 | `detect_auth()`가 구독 로그인과 `CLAUDE_CODE_OAUTH_TOKEN`을 인정하게 고친다. 그 뒤 로컬에서 `/status`로 구독 사용을 확인한다 |
 
+## 2026-10-18: 구독 인증과 단계별 모델
+
+앞 절의 "다음 할 일 후보"를 처리하고, 새 실험을 위해 아키텍처를 살펴본 뒤 단계별 모델 설정을 넣었다. 실험은 아직 하지 않았다.
+
+### 바뀐 것
+
+| PR | 커밋 | 내용 | 검증 |
+| --- | --- | --- | --- |
+| #4 | `b57cb52` | `detect_auth()`: 우선순위 5에 `CLAUDE_CODE_OAUTH_TOKEN`, 마지막에 `/login` 구독 로그인. 구독 로그인은 SDK 번들 CLI(2.1.294)의 `claude auth status --json`으로 확인하고 `authMethod == "claude.ai"`일 때만 인정한다. `user_oauth` 활성 프로필은 `/login`보다 뒤로 둔다. 토큰은 생성된 앱 환경에서 빼고 명령 가드로 막는다 | 테스트 99개 통과. 로컬 실제 결과 `구독 로그인 (claude.ai, pro)` |
+| #5 | `e5786a9`, `3ad0329` | `--stage-model STAGE=MODEL`(여러 번). STAGE는 plan, design, build(build-fix 포함), critic(세 critic 모두), plan-critic, design-critic, build-critic. 세션별 실제 모델은 `runs[].model`, 지정값은 `stage_models`에 남는다. README에 추천 조합 | 테스트 102개 통과. 실제 에이전트 실행으로는 미확인 |
+
+### 아키텍처 확인 (실험 설계용)
+
+| 질문 | 답 |
+| --- | --- |
+| 에이전트 수 | 7종: plan, plan-critic, design, design-critic, build, build-fix, build-critic. 시스템 프롬프트는 4개(critic 셋이 `CRITIC_SYSTEM` 공유) |
+| 병렬 처리 | 없다. 모든 세션이 순차 실행된다 |
+| 모델 | PR #5 전에는 `--model` 하나가 모든 단계에 적용 |
+| 디자인 | `--design`, `--design-seed`, `--design-candidates`로 직접 조정. 가장 독립적으로 바꿀 수 있다 |
+| 데이터 출처, 추천 개수 | mvpgen 옵션이 아니다. Plan이 아이디어, `--context`, `mvp.env` 키 이름을 보고 `spec.json`에 정한다. 기준선은 MMCA API 동기화와 "오늘의 추천 Top 3" |
+| 단계 단독 실행 | 옵션이 없다. `--resume`은 통과한 단계를 건너뛸 뿐이다. 앞 단계를 바꾸면 뒤 단계가 모두 바뀐다 |
+
+추천 조합(실험 전 가설): plan, design, build-critic은 `claude-opus-5-5`, build(build-fix 포함)와 plan/design critic은 `claude-sonnet-5-5`. 토큰을 가장 많이 쓰는 Build를 절반 가격 모델로 내리고, 최종 판정은 만든 모델과 다른 Opus에 맡긴다. 구독에서 모델별로 사용 한도가 얼마나 줄어드는지는 문서에 없어 미확인이다.
+
+### 로컬 실행 시도
+
+| 항목 | 내용 |
+| --- | --- |
+| 목적 | 구독 인증이 실제 실행에서 동작하는지 확인하고, 기준선 입력(seed 339168898)으로 완주 |
+| 결과 | 첫 출력 `Claude 인증: 구독 로그인 (claude.ai, pro)` 확인. Plan 1라운드 중 사용자가 중단 |
+| 남은 것 | `workspace/20261018-205446-mvp/`(`context/`, `logs/`만 있음). 지우지 않음 |
+
+### 결정 과정
+
+| 순서 | 질문이나 제안 | 결정 | 버린 안과 이유 |
+| --- | --- | --- | --- |
+| 1 | 첫 작업 | `detect_auth()` 구독 인정(PR #4). 사용자가 브라우저에서 rebase 병합하고, Claude가 PR에 병합 기록 comment를 남김 | 없음 |
+| 2 | 로컬 보완 실험 시작 | 원래 checkout은 worktree 격리 규칙 때문에 Claude가 전환할 수 없어, worktree를 main에 맞춰 기준선 입력으로 실행 | 원래 checkout에서 실행: 세션이 접근 불가 |
+| 3 | 실행 중 "멈춰" | 즉시 중단. 무슨 실험이냐는 질문에 "보완 내용은 정하지 않았고 기준선 완주 겸 인증 확인이었다"고 답함. 순서를 확인받지 않고 정한 것이 문제였다 | 계속 실행 |
+| 4 | 새 실험 방향 | 사용자가 모델, 디자인, 데이터, 추천 개수를 조정하는 실험을 하겠다고 함. 먼저 아키텍처 조사(위 표) | 바로 실행 |
+| 5 | 무엇부터 만들까 | 단계별 모델 설정(PR #5) | 단계 단독 실행(`--stop-after`): 다음 후보로 남김 |
+| 6 | 단계별 모델 추천과 설정 | 추천 조합을 README에 두고, 기본값은 바꾸지 않음 | 기본값 변경: 전부 Opus인 기준선과 비교할 수 없게 됨. Haiku critic: 판정 품질 위험 |
+| 7 | PR #5 병합 | auto mode가 `gh pr merge`를 막아 사용자가 직접 실행 | 차단 우회: 하지 않음 |
+| 8 | 실험 순서 | C: 지금은 실행하지 않음 | A: 전부 Opus 기준선을 완주한 뒤 추천 조합과 비교(변수 하나만 바꾸는 안, 2회). B: 추천 조합만 1회 |
+
+### 다음 할 일 후보
+
+- 원래 checkout을 main으로 전환하고 pull
+- 실험 A안: 전부 Opus로 기준선을 완주한 뒤 추천 조합 실행
+- 단계 단독 실행 옵션(`--stop-after`)
+- Actions 워크플로에 `stage_models` 입력 추가
+
 ## 커밋
 
 | 시각 | 커밋 |
@@ -275,3 +329,6 @@ PR #1을 main에 병합(`69c9be6`)한 뒤 같은 입력으로 두 번 실행했�
 | 10-13 | `df0367c` `--context` 참고 자료 |
 | 10-13 | `e2c241e` 참고 자료 `contexts/today-exhibitions` |
 | 10-13 | `6ca8790` `lessons.md` 저장소 보관과 `save-lessons` 잡 |
+| 10-18 | `b57cb52` `detect_auth()` 구독 로그인과 `CLAUDE_CODE_OAUTH_TOKEN` 인정 (PR #4) |
+| 10-18 | `e5786a9` `--stage-model` 단계별 모델 (PR #5) |
+| 10-18 | `3ad0329` README 단계별 모델 추천 조합 (PR #5) |
