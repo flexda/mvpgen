@@ -284,3 +284,26 @@ async def test_design_skipped_for_cli_app(tmp_path, monkeypatch):
     assert "design" not in [c[0] for c in calls]
     state = json.loads((run_dir / "state.json").read_text())
     assert state["stages"]["design"]["status"] == "skipped"
+
+
+async def test_stage_models_reach_each_session(tmp_path, monkeypatch):
+    calls = []
+    fake = make_fake_agent(calls)
+    models = {}
+
+    async def recording_agent(*, stage, model, **kw):
+        models.setdefault(stage, set()).add(model)
+        return await fake(stage=stage, **kw)
+
+    monkeypatch.setattr(pipeline_mod, "run_agent", recording_agent)
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    config = RunConfig(idea="할 일 목록", out_dir=tmp_path, budget_usd=5, model="default-model",
+                       stage_models={"plan": "plan-model", "critic": "critic-model", "build-critic": "bc-model"})
+
+    assert await Pipeline(config, run_dir).run() is True
+    assert models == {"plan": {"plan-model"}, "plan-critic": {"critic-model"},
+                      "build": {"default-model"}, "build-critic": {"bc-model"}}
+    report = json.loads((run_dir / "run_report.json").read_text())
+    assert report["stage_models"] == config.stage_models
+    assert [(r["stage"], r["model"]) for r in report["runs"]][:2] == [("plan", "plan-model"), ("plan-critic", "critic-model")]

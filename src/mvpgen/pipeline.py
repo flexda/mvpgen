@@ -39,6 +39,34 @@ class StageFailed(RuntimeError):
     pass
 
 
+# --stage-model에 쓸 수 있는 키. critic은 세 critic 모두에 적용되고, 개별 critic 키가 그보다 우선한다
+STAGE_MODEL_KEYS = ("plan", "design", "build", "critic", "plan-critic", "design-critic", "build-critic")
+
+
+def model_for(stage: str, stage_models: dict[str, str], default: str) -> str:
+    """세션 이름(plan, build-fix1, design-critic 등)에 쓸 모델. build-fixN은 build 설정을 따른다."""
+    if stage.endswith("-critic"):
+        return stage_models.get(stage) or stage_models.get("critic") or default
+    base = "build" if stage.startswith("build-fix") else stage
+    return stage_models.get(base) or default
+
+
+def parse_stage_models(items: list[str]) -> dict[str, str]:
+    """["plan=claude-sonnet-5-5", ...]를 {"plan": "claude-sonnet-5-5"}로 바꾼다. 형식이나 키가 틀리면 ValueError."""
+    models: dict[str, str] = {}
+    for item in items:
+        key, sep, value = item.partition("=")
+        key, value = key.strip(), value.strip()
+        if not sep or not value:
+            raise ValueError(f"{item!r}는 STAGE=MODEL 형식이어야 한다")
+        if key not in STAGE_MODEL_KEYS:
+            raise ValueError(f"{key!r}는 알 수 없는 단계다. 가능한 값: {', '.join(STAGE_MODEL_KEYS)}")
+        if key in models:
+            raise ValueError(f"{key}가 두 번 지정되었다")
+        models[key] = value
+    return models
+
+
 class AgentAborted(RuntimeError):
     """세션이 작업을 시작하지 못하고 끝났다 (API 오류, CLI 실행 실패). 재시도해도 같은 결과가 나온다."""
 
@@ -48,6 +76,8 @@ class RunConfig:
     idea: str
     out_dir: Path
     model: str = "claude-opus-5-5"
+    # 단계별 모델. 키는 STAGE_MODEL_KEYS, 없는 단계는 model을 쓴다
+    stage_models: dict[str, str] = field(default_factory=dict)
     effort: str = "high"
     budget_usd: float = 10.0
     max_review_rounds: int = 2
@@ -145,7 +175,8 @@ class Pipeline:
     def _load_state(self) -> dict[str, Any]:
         if self.state_path.exists():
             return json.loads(self.state_path.read_text(encoding="utf-8"))
-        return {"idea": self.config.idea, "model": self.config.model, "stages": {}, "runs": [], "cost_usd": 0.0}
+        return {"idea": self.config.idea, "model": self.config.model, "stage_models": self.config.stage_models,
+                "stages": {}, "runs": [], "cost_usd": 0.0}
 
     def _save(self) -> None:
         self.state_path.write_text(json.dumps(self.state, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -163,19 +194,20 @@ class Pipeline:
             raise BudgetExceeded(f"예산 ${self.config.budget_usd:.2f}을 모두 썼다 (사용 ${self.spent:.2f})")
         return left
 
-    def _record_run(self, run: AgentRun, round_no: int) -> None:
+    def _record_run(self, run: AgentRun, round_no: int, model: str) -> None:
         self.state["cost_usd"] = self.spent + run.cost_usd
-        self.state["runs"].append({**run.to_dict(), "round": round_no})
+        self.state["runs"].append({**run.to_dict(), "round": round_no, "model": model})
         self._save()
         status = "완료" if run.ok else f"실패({run.subtype})"
         gate = f", gate block {run.gate['blocks']}회" if run.gate else ""
-        print(f"  <- {run.stage} {status}: ${run.cost_usd:.3f}, {run.turns}턴{gate}, 누적 ${self.spent:.2f}", flush=True)
+        print(f"  <- {run.stage} {status} ({model}): ${run.cost_usd:.3f}, {run.turns}턴{gate}, 누적 ${self.spent:.2f}", flush=True)
 
     async def _agent(self, *, stage: str, round_no: int, **kwargs: Any) -> AgentRun:
+        model = model_for(stage, self.config.stage_models, self.config.model)
         run = await run_agent(
             stage=stage,
             cwd=self.run_dir,
-            model=self.config.model,
+            model=model,
             effort=self.config.effort,
             max_budget_usd=self._remaining(),
             log_path=self.run_dir / "logs" / f"{stage}-r{round_no}.log",
@@ -183,7 +215,7 @@ class Pipeline:
             protected=self.config.protected_paths,
             **kwargs,
         )
-        self._record_run(run, round_no)
+        self._record_run(run, round_no, model)
         if run.subtype == "error_max_budget_usd":
             raise BudgetExceeded("세션이 남은 예산을 모두 썼다")
         if run.api_error or run.subtype == "no_result":
@@ -423,6 +455,7 @@ class Pipeline:
             "success": verify_ok and error is None,
             "error": error,
             "model": self.config.model,
+            "stage_models": self.config.stage_models,
             "mvp_env_keys": sorted(self.config.mvp_env),
             "cost_usd": round(self.spent, 4),
             "cost_note": "SDK가 계산한 클라이언트 측 추정치",
