@@ -363,6 +363,30 @@ A안의 결과로, 같은 프로젝트에서 두 번째 실행을 하면 첫 실
 
 미확인: MMCA API 일일 호출 한도. 에이전트 실행은 아직 하지 않았다.
 
+### 첫 실제 실행 (MMCA, 15:37-16:4x)
+
+명령: `uv run mvpdata "MMCA 전시 정보를 Supabase에 적재" --context contexts/mmca-api --final-pages 5`, 구독 로그인(pro), 결과 폴더 `workspace/data-20261019-153750-mmca-supabase`(git 제외).
+
+| 단계 | 결과 |
+| --- | --- |
+| data-plan | r1 76점, r2 87점 합격 |
+| data-build | r1 83점 합격, Stop gate 1회, DB 검사 2회(check-1, check-2) |
+| 최종 검증(5페이지) | 전 단계 통과. core.exhibition_record 500, core.exhibition 184, mart.exhibition_current 25, 2회차 행 수 동일, 품질 검사 11개 위반 0 |
+| 마이그레이션 | `20261019160000_mmca_init.sql` 1개 잠김. DB 적용 기록과 같다(직접 조회) |
+| 비용 추정 | $9.44 (상한 $10에 근접. 구독이라 청구 없음) |
+| 비밀값 | 결과 폴더에 DB 비밀번호 없음(grep) |
+
+관찰:
+
+| 항목 | 내용 |
+| --- | --- |
+| 페이지 제한 우회 | 페이지 제한은 검사기가 넘기는 적재에만 걸린다. 에이전트가 자기 Bash로 실제 API를 탐색하고, `uv run --with pgserver`로 `/tmp`에 임시 Postgres를 띄워 전체 수집(40페이지)을 여러 번 돌렸다. 호출 수는 세지 않았다. 일일 한도 오류는 없었다 |
+| critic 지적(major) | 제목 포함 관계 병합이 다른 전시를 합친다(`한국근현대미술 I`과 `II`). 83점으로 합격했지만 데이터 손실이다 |
+| critic 지적(minor) | 1969년 이전 전시 56건을 core에서 뺐다(Plan의 period_order 하한 때문). 전체 수집은 Supabase에서 검증되지 않았다 |
+| 정리 | 에이전트가 남긴 `/tmp/mmca_pg`(78MB)와 탐색 파일을 지웠다. 서버 프로세스는 이미 꺼져 있었다 |
+
+이 프로젝트에는 이제 기록과 데이터가 있어 같은 프로젝트로 새 실행을 하면 사전 점검에서 멈춘다.
+
 ### 결정 과정
 
 | 순서 | 질문이나 제안 | 결정 | 버린 안과 이유 |
