@@ -50,8 +50,9 @@ def _write(path: Path, entries: list[str]) -> None:
     path.write_text("# 이전 실행에서 critic이 지적한 문제\n\n" + "\n".join(kept) + "\n", encoding="utf-8")
 
 
-def lessons_prompt(path: Path, stage: str) -> str:
-    entries = [e for e in _entries(path) if e.startswith(f"- [{stage}]")][-MAX_INJECTED:]
+def lessons_prompt(path: Path, *stages: str) -> str:
+    """stages 중 하나로 기록된 교훈. 단계가 나뉘기 전 이름(plan)도 함께 넘길 수 있다."""
+    entries = [e for e in _entries(path) if e.startswith(tuple(f"- [{s}]" for s in stages))][-MAX_INJECTED:]
     if not entries:
         return ""
     return "\n\n# 이전 실행에서 반복된 실수 (같은 실수를 하지 말 것)\n" + "\n".join(entries)

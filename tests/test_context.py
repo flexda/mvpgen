@@ -39,11 +39,11 @@ def test_copy_context_rejects_missing_dir(tmp_path):
 
 def test_prompts_mention_context_only_when_present():
     files = ["context/api.md"]
-    assert "context/api.md" in prompts.plan_prompt("아이디어", None, files)
-    assert "크롤링하지 않" in prompts.plan_prompt("아이디어", None, files)
-    assert "context/" not in prompts.plan_prompt("아이디어", None, [])
-    assert "context/" in prompts.critic_prompt("plan", "아이디어", "루브릭", "reviews/plan-r1.json", has_context=True)
-    assert "context/" not in prompts.critic_prompt("plan", "아이디어", "루브릭", "reviews/plan-r1.json")
+    assert "context/api.md" in prompts.prd_prompt("아이디어", None, files)
+    assert "크롤링하지 않" in prompts.spec_prompt("아이디어", 2, files)
+    assert "context/" not in prompts.prd_prompt("아이디어", None, [])
+    assert "context/" in prompts.critic_prompt("spec", "아이디어", "루브릭", "reviews/spec-r1.json", has_context=True)
+    assert "context/" not in prompts.critic_prompt("spec", "아이디어", "루브릭", "reviews/spec-r1.json")
 
 
 def test_copy_brief_and_title(tmp_path):

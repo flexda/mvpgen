@@ -20,8 +20,8 @@ from mvpgen.design import (check_design, check_directions, choose_direction, cop
                            pick_candidates)
 from mvpgen.gates import StopGate
 from mvpgen.lessons import lessons_prompt, record_lessons
-from mvpgen.rubrics import BUILD_RUBRIC, DESIGN_RUBRIC, PLAN_RUBRIC
-from mvpgen.spec import Spec, check_plan, load_spec
+from mvpgen.rubrics import BUILD_RUBRIC, DESIGN_RUBRIC, PRD_RUBRIC, SPEC_RUBRIC
+from mvpgen.spec import Spec, candidate_ids, candidate_spec, check_prd, check_spec, check_spec_candidates, load_spec
 from mvpgen.verify import free_port, verify_app
 
 @dataclass(frozen=True)
@@ -39,7 +39,8 @@ class Stage:
 
 # 실행 순서대로 둔다. 이 순서가 --stage-model 키와 README 검증 기록의 순서가 된다
 STAGES: dict[str, Stage] = {s.name: s for s in (
-    Stage("plan", "Plan", ("Read", "Write", "Edit", "Glob"), ("Read", "Glob", "Grep", "Write"), PLAN_RUBRIC),
+    Stage("prd", "PRD", ("Read", "Write", "Edit", "Glob"), ("Read", "Glob", "Grep", "Write"), PRD_RUBRIC),
+    Stage("spec", "Spec", ("Read", "Write", "Edit", "Glob"), ("Read", "Glob", "Grep", "Write"), SPEC_RUBRIC),
     Stage("design", "Design", ("Read", "Write", "Edit", "Glob", "Grep"), ("Read", "Glob", "Grep", "Write"), DESIGN_RUBRIC),
     Stage("build", "Build", ("Read", "Write", "Edit", "Glob", "Grep", "Bash"), ("Read", "Glob", "Grep", "Write", "Bash"),
           BUILD_RUBRIC, critic_port=True),
@@ -61,15 +62,22 @@ class AwaitingChoice(RuntimeError):
     """사람이 고를 차례라 실행을 멈춘다. 실패가 아니다. --resume --choose로 이어 간다."""
 
 
+# 단계가 prd와 spec으로 나뉘기 전 이름. --stage-model과 lessons.md의 plan 값을 두 단계가 이어 쓴다
+LEGACY_STAGE = {"prd": "plan", "spec": "plan"}
+
 # --stage-model에 쓸 수 있는 키. critic은 모든 critic에 적용되고, 개별 critic 키가 그보다 우선한다
-STAGE_MODEL_KEYS = (*STAGES, "critic", *(f"{s}-critic" for s in STAGES))
+STAGE_MODEL_KEYS = (*STAGES, "plan", "critic", *(f"{s}-critic" for s in STAGES), "plan-critic")
 
 
 def model_for(stage: str, stage_models: dict[str, str], default: str) -> str:
-    """세션 이름(plan, build-fix1, design-critic 등)에 쓸 모델. build-fixN, design-directions는 앞 단계 설정을 따른다."""
+    """세션 이름(prd, build-fix1, spec-critic 등)에 쓸 모델. build-fixN, design-directions는 앞 단계 설정을 따른다.
+    prd와 spec은 따로 지정하지 않으면 plan 값을 쓴다."""
     if stage.endswith("-critic"):
-        return stage_models.get(stage) or stage_models.get("critic") or default
-    return stage_models.get(stage.split("-", 1)[0]) or default
+        legacy = LEGACY_STAGE.get(stage.removesuffix("-critic"))
+        return (stage_models.get(stage) or (legacy and stage_models.get(f"{legacy}-critic"))
+                or stage_models.get("critic") or default)
+    base = stage.split("-", 1)[0]
+    return stage_models.get(base) or stage_models.get(LEGACY_STAGE.get(base, "")) or default
 
 
 def parse_stage_models(items: list[str]) -> dict[str, str]:
@@ -105,7 +113,9 @@ class RunConfig:
     max_gate_blocks: int = 3
     max_fix_rounds: int = 2
     pass_threshold: int = 80
-    plan_max_turns: int = 30
+    plan_max_turns: int = 30  # prd와 spec 세션 각각
+    # Spec 단계가 만들 구현 후보 수. critic이 그중 하나를 spec.json으로 고른다
+    spec_candidates: int = 2
     design_max_turns: int = 60
     build_max_turns: int = 150
     critic_max_turns: int = 60
@@ -126,6 +136,7 @@ class RunConfig:
 # 실행 설정 중 --resume에서 플래그를 생략하면 처음 실행의 값을 이어 쓰는 것과 그 기본값
 SETTING_DEFAULTS: dict[str, Any] = {
     "model": "claude-opus-5-5", "stage_models": {}, "effort": "high", "budget_usd": 10.0, "design": "auto",
+    "spec_candidates": 2,
 }
 
 
@@ -164,7 +175,7 @@ def fallback_stamp(slug: str) -> str | None:
 
 
 def find_run_dir(out_dir: Path, slug: str) -> Path | None:
-    """slug 폴더를 찾는다. Plan 뒤에 이름이 바뀌었으면 renamed_from이 slug인 폴더를 돌려준다."""
+    """slug 폴더를 찾는다. Spec 뒤에 이름이 바뀌었으면 renamed_from이 slug인 폴더를 돌려준다."""
     direct = out_dir / slug
     if (direct / "state.json").exists():
         return direct
@@ -185,7 +196,8 @@ class Pipeline:
         self.state: dict[str, Any] = self._load_state()
         # --resume이 플래그를 생략했을 때 이어 쓸 값. 마지막 실행의 설정을 남긴다
         self.state["settings"] = {"model": config.model, "stage_models": config.stage_models, "effort": config.effort,
-                                  "budget_usd": config.budget_usd, "design": config.design}
+                                  "budget_usd": config.budget_usd, "design": config.design,
+                                  "spec_candidates": config.spec_candidates}
 
     def _set_run_dir(self, run_dir: Path) -> None:
         # 모든 단계가 이 세 경로에서 파일 경로를 만든다. 폴더 이름을 바꾸면 여기서 한 번에 갱신한다
@@ -193,7 +205,7 @@ class Pipeline:
         self.app_dir = run_dir / "app"
         self.state_path = run_dir / "state.json"
 
-    def rename_after_plan(self) -> None:
+    def rename_after_spec(self) -> None:
         """아이디어에서 영문 slug를 못 만들어 '<시각>-mvp'가 된 폴더를 spec.name 기반 이름으로 바꾼다."""
         stamp = fallback_stamp(self.run_dir.name)
         if stamp is None or not (self.run_dir / "spec.json").exists():
@@ -288,9 +300,18 @@ class Pipeline:
         return run
 
     # ---- 검사기 ----
-    def _plan_check(self) -> tuple[bool, str]:
-        problems = check_plan(self.run_dir)
-        return (not problems), ("\n".join(f"- {p}" for p in problems) or "Plan 검사 통과")
+    @staticmethod
+    def _report(problems: list[str], label: str) -> tuple[bool, str]:
+        return (not problems), ("\n".join(f"- {p}" for p in problems) or f"{label} 검사 통과")
+
+    def _prd_check(self) -> tuple[bool, str]:
+        return self._report(check_prd(self.run_dir), "PRD")
+
+    def _spec_check(self) -> tuple[bool, str]:
+        # 후보를 고르기 전에는 후보들을, 고른 뒤에는 spec.json을 검사한다
+        if (self.run_dir / "spec.json").exists():
+            return self._report(check_spec(self.run_dir), "Spec")
+        return self._report(check_spec_candidates(self.run_dir / "spec-candidates", self.config.spec_candidates), "Spec 후보")
 
     def _design_check(self) -> tuple[bool, str]:
         problems = check_design(self.run_dir, self.state["design"]["candidates"])
@@ -309,7 +330,11 @@ class Pipeline:
         generate: Callable[[str | None, int], Any],
         check: Callable[[], tuple[bool, str]],
         fix: Callable[[str, int, int], Any] | None = None,
+        winners: Callable[[], list[str] | None] | None = None,
+        on_review: Callable[[Review], None] | None = None,
     ) -> Review:
+        """winners가 후보 id 목록을 돌려주는 라운드에서는 critic이 그중 하나를 review의 winner로 고른다.
+        on_review는 라운드 스냅샷을 찍기 전에 불린다(고른 후보를 산출물로 옮길 때 쓴다)."""
         stage = spec.name
         info = self._stage(stage)
         tracker = RoundTracker(paths, self.run_dir, self.run_dir / "snapshots" / stage)
@@ -337,7 +362,9 @@ class Pipeline:
             review_rel = f"reviews/{stage}-r{round_no}.json"
             review_path = self.run_dir / review_rel
             review_path.parent.mkdir(exist_ok=True)
-            critic_gate = StopGate(f"{stage} review", lambda: check_review_file(review_path), self.config.max_gate_blocks)
+            choices = winners() if winners else None
+            critic_gate = StopGate(f"{stage} review", lambda: check_review_file(review_path, choices),
+                                   self.config.max_gate_blocks)
             port = free_port() if spec.critic_port else None
             await self._agent(
                 stage=f"{stage}-critic",
@@ -345,23 +372,26 @@ class Pipeline:
                 system_prompt=prompts.CRITIC_SYSTEM,
                 prompt=prompts.critic_prompt(stage, self.config.idea, spec.rubric, review_rel, port,
                                           has_context=bool(list_context(self.run_dir)),
-                                          has_design=(self.run_dir / "DESIGN.md").exists(), has_brief=self._has_brief),
+                                          has_design=(self.run_dir / "DESIGN.md").exists(), has_brief=self._has_brief,
+                                          candidates=choices),
                 tools=list(spec.critic_tools),
                 writable=[review_path],
                 max_turns=self.config.critic_max_turns,
                 gate=critic_gate,
             )
-            ok_file, msg = check_review_file(review_path)
+            ok_file, msg = check_review_file(review_path, choices)
             if not ok_file:
                 raise StageFailed(f"{stage} critic이 유효한 review를 남기지 못했다: {msg}")
             review = load_review(review_path)
+            if on_review:
+                on_review(review)
             accepted = is_accepted(review, self.config.pass_threshold)
             rolled_back = tracker.record(round_no, review)
             added = record_lessons(self.lessons_path, stage, review.issues)
             info["rounds"].append({
                 "round": round_no, "score": review.score, "pass": review.passed, "accepted": accepted,
                 "critical": review.critical_count, "issues": len(review.issues), "rolled_back": rolled_back,
-                "lessons_added": added,
+                "lessons_added": added, **({"winner": review.winner} if choices else {}),
             })
             self._save()
             verdict = "합격" if accepted else "불합격"
@@ -386,23 +416,79 @@ class Pipeline:
         return best.review if best else last  # type: ignore[return-value]
 
     # ---- 단계 ----
-    async def plan(self) -> None:
-        stage = STAGES["plan"]
+    async def prd(self) -> None:
+        stage = STAGES["prd"]
         if self._done(stage.name):
             return
-        system = (prompts.PLAN_SYSTEM + prompts.env_note(sorted(self.config.mvp_env))
-                  + lessons_prompt(self.lessons_path, stage.name))
-        writable = [self.run_dir / "PRD.md", self.run_dir / "spec.json"]
+        system = prompts.PRD_SYSTEM + lessons_prompt(self.lessons_path, stage.name, LEGACY_STAGE[stage.name])
+        writable = [self.run_dir / "PRD.md"]
 
         async def generate(feedback: str | None, round_no: int) -> None:
             await self._agent(
                 stage=stage.name, round_no=round_no, system_prompt=system,
-                prompt=prompts.plan_prompt(self.config.idea, feedback, list_context(self.run_dir), self._has_brief),
+                prompt=prompts.prd_prompt(self.config.idea, feedback, list_context(self.run_dir), self._has_brief),
                 tools=list(stage.gen_tools), writable=writable, max_turns=self.config.plan_max_turns,
-                gate=self._gate(stage, self._plan_check),
+                gate=self._gate(stage, self._prd_check),
             )
 
-        await self._review_loop(stage, paths=writable, generate=generate, check=self._plan_check)
+        await self._review_loop(stage, paths=writable, generate=generate, check=self._prd_check)
+
+    async def spec(self) -> None:
+        """1라운드는 후보를 만들고 critic이 하나를 골라 spec.json으로 옮긴다. 2라운드부터는 spec.json만 고친다."""
+        stage = STAGES["spec"]
+        if self._done(stage.name):
+            return
+        cand_dir = self.run_dir / "spec-candidates"
+        spec_path = self.run_dir / "spec.json"
+        lessons = lessons_prompt(self.lessons_path, stage.name, LEGACY_STAGE[stage.name])
+        env = prompts.env_note(sorted(self.config.mvp_env))
+        info = self.state.setdefault("spec", {})
+
+        async def generate(feedback: str | None, round_no: int) -> None:
+            if not spec_path.exists():
+                await self._agent(
+                    stage=stage.name, round_no=round_no, system_prompt=prompts.SPEC_SYSTEM + env + lessons,
+                    prompt=prompts.spec_prompt(self.config.idea, self.config.spec_candidates, list_context(self.run_dir),
+                                               self._has_brief),
+                    tools=list(stage.gen_tools), writable=[cand_dir], max_turns=self.config.plan_max_turns,
+                    gate=self._gate(stage, self._spec_check),
+                )
+                return
+            if feedback is None:
+                # --resume으로 고른 뒤에 다시 들어왔다. spec.json이 검사를 통과하면 평가만 다시 받고,
+                # 개정이 중간에 끊겨 깨졌으면 검사 결과를 지적으로 삼아 고친다
+                ok, report = self._spec_check()
+                if ok:
+                    return
+                feedback = report
+            await self._agent(
+                stage=stage.name, round_no=round_no, system_prompt=prompts.SPEC_REVISE_SYSTEM + env + lessons,
+                prompt=prompts.spec_revise_prompt(self.config.idea, info["winner"], feedback,
+                                                  list_context(self.run_dir), self._has_brief),
+                tools=list(stage.gen_tools), writable=[spec_path], max_turns=self.config.plan_max_turns,
+                gate=self._gate(stage, self._spec_check),
+            )
+
+        def winners() -> list[str] | None:
+            if spec_path.exists():
+                return None
+            # 위치 편향을 줄이려고 critic에게 보여 줄 순서를 섞고 기록한다
+            order = candidate_ids(cand_dir)
+            random.SystemRandom().shuffle(order)
+            info["order"] = order
+            return order
+
+        def on_review(review: Review) -> None:
+            if review.winner is None or spec_path.exists():
+                return
+            spec_path.write_text(json.dumps(candidate_spec(cand_dir, review.winner), ensure_ascii=False, indent=2),
+                                 encoding="utf-8")
+            info["winner"] = review.winner
+            self._save()
+            print(f"  spec: 후보 {review.winner}를 spec.json으로 골랐다", flush=True)
+
+        await self._review_loop(stage, paths=[cand_dir, spec_path], generate=generate, check=self._spec_check,
+                                winners=winners, on_review=on_review)
 
     async def design(self) -> None:
         stage = STAGES["design"]
@@ -560,6 +646,7 @@ class Pipeline:
             "runs": self.state["runs"],
             "spec": spec.model_dump() if spec else None,
             "design": self.state.get("design"),
+            "spec_choice": self.state.get("spec"),
         }
         report_path = self.run_dir / "run_report.json"
         report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -572,9 +659,10 @@ class Pipeline:
     async def run(self) -> bool:
         error: str | None = None
         try:
-            await self.plan()
-            # Plan 루프가 최고점 라운드로 되돌린 뒤의 최종 spec.name을 쓴다. --resume에서 plan을 건너뛰어도 여기를 지난다
-            self.rename_after_plan()
+            await self.prd()
+            await self.spec()
+            # Spec 루프가 최고점 라운드로 되돌린 뒤의 최종 spec.name을 쓴다. --resume에서 spec을 건너뛰어도 여기를 지난다
+            self.rename_after_spec()
             await self.design()
             await self.build()
             self.final_verify()

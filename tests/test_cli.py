@@ -12,7 +12,8 @@ def paused_run(out, **state_over):
     run_dir.mkdir(parents=True)
     state = {
         "idea": "x", "model": "m0", "stage_models": {"build": "b"},
-        "settings": {"model": "m0", "stage_models": {"build": "b"}, "effort": "low", "budget_usd": 3.0, "design": "auto"},
+        "settings": {"model": "m0", "stage_models": {"build": "b"}, "effort": "low", "budget_usd": 3.0, "design": "auto",
+                     "spec_candidates": 3},
         "stages": {"design": {"status": "awaiting_choice", "rounds": []}}, "runs": [], "cost_usd": 0.0,
     }
     state.update(state_over)
@@ -47,6 +48,7 @@ def test_resume_with_choice_keeps_first_run_settings_and_exits_awaiting(tmp_path
     result, config = invoke(tmp_path, monkeypatch, "--resume", "run", "--choose", "C", "--reason", "의외라서")
     assert result.exit_code == EXIT_AWAITING_CHOICE, result.output
     assert (config.model, config.stage_models, config.effort, config.budget_usd) == ("m0", {"build": "b"}, "low", 3.0)
+    assert config.spec_candidates == 3
     assert (config.choose, config.choose_reason) == ("C", "의외라서")
 
 

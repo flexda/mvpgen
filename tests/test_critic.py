@@ -97,3 +97,19 @@ def test_merge_lessons_creates_missing_dst(tmp_path):
     dst = tmp_path / "new" / "lessons.md"
     assert merge_lessons(dst, src) == 1
     assert "- [build] X -> x" in dst.read_text()
+
+
+def test_review_winner_must_be_a_candidate(tmp_path):
+    path = tmp_path / "spec-r1.json"
+    path.write_text(json.dumps({"pass": True, "score": 90, "summary": "b가 낫다", "winner": "c"}))
+    assert check_review_file(path)[0]
+    ok, msg = check_review_file(path, ["a", "b"])
+    assert not ok and "winner" in msg
+    assert check_review_file(path, ["a", "b", "c"])[0]
+
+
+def test_lessons_prompt_reads_several_stage_names(tmp_path):
+    path = tmp_path / "lessons.md"
+    path.write_text("# h\n\n- [plan] 예전 지적 -> 고쳐라\n- [spec] 새 지적 -> 고쳐라\n- [build] 다른 단계 -> x\n")
+    got = lessons_prompt(path, "spec", "plan")
+    assert "예전 지적" in got and "새 지적" in got and "다른 단계" not in got

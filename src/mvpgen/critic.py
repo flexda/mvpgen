@@ -28,6 +28,8 @@ class Review(BaseModel):
     score: int = Field(..., ge=0, le=100)
     summary: str = Field(..., min_length=1)
     issues: list[Issue] = Field(default_factory=list)
+    # 후보 중 하나를 고르는 라운드에서만 쓴다. score와 issues는 이 후보 기준이다
+    winner: str | None = None
 
     @property
     def critical_count(self) -> int:
@@ -46,13 +48,16 @@ def load_review(path: Path) -> Review:
     return Review.model_validate_json(path.read_text(encoding="utf-8"))
 
 
-def check_review_file(path: Path) -> tuple[bool, str]:
+def check_review_file(path: Path, winners: list[str] | None = None) -> tuple[bool, str]:
+    """winners를 주면 review의 winner가 그중 하나여야 한다."""
     if not path.exists():
         return False, f"{path.name}이 아직 없다. 지정된 형식으로 작성하라."
     try:
-        load_review(path)
+        review = load_review(path)
     except ValidationError as e:
         return False, f"{path.name} 스키마 오류:\n{e}"
+    if winners is not None and review.winner not in winners:
+        return False, f"{path.name}의 winner가 후보 id 중 하나가 아니다 (지금 {review.winner!r}, 후보 {', '.join(winners)})"
     return True, "review 파일 확인"
 
 

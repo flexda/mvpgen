@@ -29,30 +29,60 @@ SPEC_EXAMPLE = {
     "startup_timeout": 60,
 }
 
-PLAN_SYSTEM = f"""\
-너는 한 줄 아이디어를 하루 안에 만들 수 있는 MVP 기획으로 바꾸는 제품 엔지니어다.
-현재 작업 폴더에 두 파일을 작성한다. 다른 파일은 만들지 않는다.
+PRD_SYSTEM = f"""\
+너는 아이디어를 하루 안에 만들 수 있는 MVP 기획으로 바꾸는 프로덕트 매니저다.
+현재 작업 폴더에 PRD.md 하나만 작성한다. 다른 파일은 만들지 않는다.
 
-1. PRD.md: 다음 제목을 이 순서대로 정확히 포함한다: {", ".join(PRD_HEADINGS)}.
-   문제, 대상 사용자와 대표 시나리오, 기능 목록, 이번 MVP에서 하지 않을 것을 구체적으로 쓴다.
-2. spec.json: 아래 예시와 같은 키를 갖는 JSON.
-{json.dumps(SPEC_EXAMPLE, ensure_ascii=False, indent=2)}
+PRD.md는 다음 제목을 이 순서대로 정확히 포함한다: {", ".join(PRD_HEADINGS)}.
+문제, 대상 사용자와 대표 시나리오, 기능 목록, 이번 MVP에서 하지 않을 것을 구체적으로 쓴다.
 
-spec.json 작성 규칙:
+지켜야 할 것:
+- PRD는 무엇을 왜 만드는지만 다룬다. 스택, 명령, 기대 건수나 점수 같은 검증용 수치는 쓰지 않는다. 그것은 다음 단계의 spec이 정한다.
+- Features에는 기능마다 F1, F2처럼 id를 붙인다. 기능은 3~7개로, 핵심 가치를 보여 주는 데 꼭 필요한 것만 남긴다.
+- 아이디어 원문의 요구는 빠짐없이 Features에 담는다. 원문에 없는 요구를 지어 넣지 않는다.
+"""
+
+_SPEC_RULES = """\
+spec 작성 규칙:
 - name은 앱 내용을 나타내는 영문 소문자와 하이픈 이름으로 짓는다 (아이디어가 한글이어도). 결과 폴더 이름에 쓰인다.
 - intent에는 아이디어 원문이 요구한 것을 빠짐없이 하나씩 나눠 적고(원문 표현을 살린다), 각각을 해결하는 feature id를 연결한다.
   원문에 없는 요구는 intent에 넣지 않는다. 시연에 필요한 보조 기능은 intent 없이 features에만 둘 수 있다.
+- feature마다 자동으로 판정 가능한 acceptance criterion을 하나 이상 둔다. 기대 건수나 순서처럼 데이터에서 나오는 값은 자료로 직접 계산해 적는다.
 
 스택 선택 규칙:
 - macOS 한 대에서 install_cmd와 run_cmd만으로 실행되어야 한다. 별도 DB 서버와 Docker는 쓰지 않는다.
 - 외부 API는 아래 '준비된 환경변수'에 키가 있는 서비스만, 아이디어에 꼭 필요할 때 쓴다. 목록에 없는 키가 필요한 서비스는 쓰지 않는다.
 - 저장이 필요하면 SQLite나 파일을 쓴다. 아이디어에 맞는 가장 단순한 스택을 고른다.
 - Python을 쓰면 uv를 쓴다 (pip 금지). Node를 쓰면 npm을 쓴다.
-- 서버형 앱은 PORT 환경변수로 포트를 받고 127.0.0.1에서 듣는다. smoke.url에는 {{port}}를 쓴다.
+- 서버형 앱은 PORT 환경변수로 포트를 받고 127.0.0.1에서 듣는다. smoke.url에는 {port}를 쓴다.
 - CLI형 앱이면 smoke.command를 쓰고 smoke.url은 생략한다.
 - 모든 명령은 app/ 디렉토리를 기준으로 실행된다고 가정한다.
-- 기능은 3~7개. feature마다 자동으로 판정 가능한 acceptance criterion을 하나 이상 둔다.
 """
+
+SPEC_SYSTEM = f"""\
+너는 기획 문서(PRD.md)를 실행 가능한 명세로 바꾸는 제품 엔지니어다.
+spec-candidates/ 폴더에 서로 다른 구현 후보를 지정된 개수만큼 <id>.json 파일로 작성한다(id는 a, b, c 순서). 다른 파일은 만들지 않는다.
+
+후보 파일 형식:
+{{
+  "decision": "이 앱에서 가장 위험한 결정 하나 (모든 후보가 같은 문장)",
+  "approach": "그 결정에 대한 이 후보의 선택과 이유",
+  "spec": {json.dumps(SPEC_EXAMPLE, ensure_ascii=False, indent=2)}
+}}
+
+후보를 나누는 방법:
+- 먼저 이 앱에서 틀리면 가장 비싼 결정 하나를 고른다(예: 데이터를 실시간 API로 받을지 수집해 둔 파일로 쓸지, 서버 렌더링인지 정적 페이지인지).
+  후보는 그 결정에서만 서로 다른 선택을 한다. 일부러 나쁜 후보를 만들지 않는다. 각 후보는 그 선택에서 최선이어야 한다.
+- 기능은 PRD.md의 Features를 그대로 따른다. 모든 후보의 feature id와 범위가 같다.
+- 요구 원문이 스택이나 방식을 정해 두었으면 그것을 지키고, 남은 결정에서 후보를 나눈다.
+
+""" + _SPEC_RULES
+
+SPEC_REVISE_SYSTEM = """\
+너는 제품 엔지니어다. 작업 폴더의 spec.json은 여러 구현 후보 중 리뷰어가 고른 명세다. 리뷰 지적을 반영해 spec.json만 고친다.
+PRD.md와 spec-candidates/는 고치지 않는다. 고른 후보의 approach를 바꾸지 않는다. PRD.md의 결함은 spec에서 바로잡을 수 있는 만큼만 반영한다.
+
+""" + _SPEC_RULES
 
 BUILD_SYSTEM = """\
 너는 기획 문서를 받아 동작하는 MVP를 구현하는 시니어 엔지니어다.
@@ -177,20 +207,38 @@ BRIEF_NOTE = (
 )
 
 
-def plan_prompt(idea: str, feedback: str | None, context_files: list[str] | None = None, has_brief: bool = False) -> str:
-    prompt = f"아이디어: {idea}\n\nPRD.md와 spec.json을 작성하라."
+def _brief_and_context(has_brief: bool, context_files: list[str] | None) -> str:
+    note = ""
     if has_brief:
-        prompt += BRIEF_NOTE + (
-            "작성 전에 끝까지 읽어라. 대상 사용자, 꼭 필요한 기능, 하지 않을 것, 제약을 PRD.md와 spec.json에 그대로 반영하고,"
-            " intent는 brief.md의 요구를 빠짐없이 나눠 적는다. brief.md가 하지 말라고 한 것을 기능에 넣지 않는다."
+        note += BRIEF_NOTE + (
+            "작성 전에 끝까지 읽어라. 대상 사용자, 꼭 필요한 기능, 하지 않을 것, 제약을 그대로 반영하고,"
+            " brief.md가 하지 말라고 한 것을 기능에 넣지 않는다."
         )
-    prompt += context_note(context_files or [], "plan")
+    return note + context_note(context_files or [], "plan")
+
+
+def prd_prompt(idea: str, feedback: str | None, context_files: list[str] | None = None, has_brief: bool = False) -> str:
+    prompt = f"아이디어: {idea}\n\nPRD.md를 작성하라." + _brief_and_context(has_brief, context_files)
     if feedback:
-        prompt += (
-            "\n\n이전 버전이 리뷰를 통과하지 못했다. 기존 파일을 읽고 아래 지적을 모두 반영해 두 파일을 고쳐라.\n\n"
-            + feedback
-        )
+        prompt += "\n\n이전 버전이 리뷰를 통과하지 못했다. 기존 PRD.md를 읽고 아래 지적을 모두 반영해 고쳐라.\n\n" + feedback
     return prompt
+
+
+def spec_prompt(idea: str, n: int, context_files: list[str] | None = None, has_brief: bool = False) -> str:
+    return (
+        f"아이디어: {idea}\n\nPRD.md를 읽고 spec-candidates/에 구현 후보 {n}개를 작성하라."
+        + _brief_and_context(has_brief, context_files)
+    )
+
+
+def spec_revise_prompt(
+    idea: str, winner: str, feedback: str, context_files: list[str] | None = None, has_brief: bool = False,
+) -> str:
+    return (
+        f"아이디어: {idea}\n\nspec.json은 spec-candidates/{winner}.json에서 고른 명세다. 그 후보의 decision과 approach를 먼저 읽어라.\n"
+        "spec.json이 검사나 리뷰를 통과하지 못했다. 아래 지적을 모두 반영해 spec.json을 고쳐라."
+        + _brief_and_context(has_brief, context_files) + "\n\n" + feedback
+    )
 
 
 def directions_prompt(idea: str, candidates: list[str], context_files: list[str] | None = None) -> str:
@@ -263,16 +311,26 @@ def fix_prompt(report: str) -> str:
 
 def critic_prompt(
     stage: str, idea: str, rubric: str, review_path: str, port: int | None = None, has_context: bool = False,
-    has_design: bool = False, has_brief: bool = False,
+    has_design: bool = False, has_brief: bool = False, candidates: list[str] | None = None,
 ) -> str:
     target = {
-        "plan": "PRD.md와 spec.json",
+        "prd": "PRD.md",
+        "spec": "spec.json (리뷰어가 고른 후보, 원래 후보는 spec-candidates/, 기획은 PRD.md)",
         "design": "DESIGN.md (사람이 고른 방향은 concepts.json의 chosen과 reason, 원천은 design-candidates/, 기획은 PRD.md와 spec.json)",
     }.get(stage, "spec.json의 기준에 비춘 app/ 구현")
+    if candidates:
+        listing = "\n".join(f"- spec-candidates/{c}.json" for c in candidates)
+        target = f"구현 후보 {len(candidates)}개 (기획은 PRD.md)\n{listing}"
     prompt = (
         f"원래 아이디어: {idea}\n\n평가 대상: {target}\n\n루브릭:\n{rubric}\n"
         f"평가 결과를 {review_path}에 작성하라."
     )
+    if candidates:
+        prompt += (
+            "\n\n후보마다 루브릭으로 따져 본 뒤 가장 나은 후보 하나를 골라 review JSON의 \"winner\"에 그 id를 적어라."
+            " 목록 순서는 무작위다. 순서로 고르지 마라. score, pass, issues는 고른 후보 기준으로 쓰고,"
+            " summary에 후보별 비교와 고른 이유를 남겨라. 고른 후보가 spec.json이 되고 이후 라운드는 그것만 고친다."
+        )
     if has_brief:
         prompt += BRIEF_NOTE + "원래 아이디어 대신 brief.md를 요구 원문으로 삼아 평가하라. 루브릭의 '아이디어 원문'은 brief.md를 뜻한다."
     if stage == "build" and has_design:
