@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A3 New Museum 질문형</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@125,800;125,900&family=Black+Han+Sans&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="newmuseum.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="bar">
+    <span class="mark">오늘 뭐하지</span>
+    <nav class="nav"><span class="hide">전시</span><span class="hide">갤러리</span><span class="pill">10.18 SUN</span></nav>
+  </header>
+  <section class="hero">
+    <p class="big q">오늘은<br>어떤 전시?</p>
+    <div class="seg" id="seg"></div>
+    <div class="tools"><label><input type="checkbox" id="sure"> 정보가 확인된 전시만</label><span id="rule"></span></div>
+  </section>
+  <h2 id="h"></h2>
+  <div class="rows" id="list" aria-live="polite"></div>
+  <footer>
+    <span>갤러리 정보 기준일 <b>2026-10-06</b></span>
+    <span>국립현대미술관 · 마지막 동기화 기록 없음</span>
+    <button type="button">MMCA 동기화</button>
+  </footer>
+</div>
+<script src="data.js"></script>
+<script src="logic.js"></script>
+<script>
+  const chipsFor = (x) => badges(x).length ? '<span class="chips">' + badges(x).map((b) => '<span class="chip blue">' + b + "</span>").join("") + "</span>" : "";
+  const dA = (x) => '<span class="d' + (x.days === 0 ? " today" : "") + '">' + dLabel(x.days) + "</span>";
+  const rowA = (x) => '<a class="r" href="#/exhibitions/' + x.id + '"><span class="t">' + esc(x.title) + "</span>" + dA(x) +
+    '<span class="m">' + esc(x.artists) + " · " + esc(place(x)) + " · " + period(x) + "</span>" + chipsFor(x) + "</a>";
+  const seg = document.getElementById("seg"), sure = document.getElementById("sure");
+  seg.innerHTML = QUESTIONS.map((q, i) => '<button type="button" data-v="' + q.k + '" aria-pressed="' + (i === 0) + '">' + q.label + '<span class="n"></span></button>').join("");
+  let key = "today";
+  function render() {
+    const a = answer(key, sure.checked);
+    seg.querySelectorAll("button").forEach((b) => (b.querySelector(".n").textContent = a.counts[b.dataset.v]));
+    document.getElementById("rule").textContent = a.rule + " · " + a.shown.length + "건";
+    document.getElementById("h").textContent = QUESTIONS.find((q) => q.k === key).label + " " + a.shown.length;
+    document.getElementById("list").innerHTML = a.shown.length ? a.shown.map(rowA).join("") : '<p class="empty">이 기준에 맞는 전시가 없습니다.</p>';
+  }
+  bindSeg(seg, (v) => { key = v; render(); });
+  sure.addEventListener("change", render);
+  render();
+</script>
+</body>
+</html>

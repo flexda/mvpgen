@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>B3 Barbican 질문형</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="barbican.css">
+</head>
+<body>
+<header class="top">
+  <div class="bar"><span class="mark">오늘 뭐하지</span><span class="ghost">10월 18일 (일)</span></div>
+  <nav><span>오늘</span><span>전체 전시</span><span>갤러리</span></nav>
+</header>
+<section class="hero">
+  <div class="in">
+    <h1>오늘은 어떤 전시를 볼까요?</h1>
+    <div class="seg" id="seg" role="group" aria-label="고르는 기준"></div>
+    <div class="tools"><label><input type="checkbox" id="sure"> 정보가 확인된 전시만</label></div>
+  </div>
+</section>
+<main class="in">
+  <div class="sum"><span class="big" id="big"></span><span class="sub" id="sub"></span></div>
+  <div class="tickets" id="list" aria-live="polite"></div>
+</main>
+<footer><div class="in">
+  <span>갤러리 정보 기준일 <b>2026-10-06</b></span>
+  <span>국립현대미술관 · 마지막 동기화 기록 없음</span>
+  <button type="button">MMCA 동기화</button>
+</div></footer>
+<script src="data.js"></script>
+<script src="logic.js"></script>
+<script>
+  const tagsFor = (x) => '<div class="row"><span class="tag' + (x.days === 0 ? " today" : "") + '">' + dLabel(x.days) + "</span>" + badges(x).map((b) => '<span class="tag">' + b + "</span>").join("") + "</div>";
+  const ticket = (x, stub) => '<a class="tk" href="#/exhibitions/' + x.id + '">' + stub +
+    '<div class="tb"><div class="g">' + esc(place(x)) + '</div><div class="t">' + esc(x.title) + '</div><div class="m">' + esc(x.artists) + " · " + period(x) + "</div>" + tagsFor(x) + "</div></a>";
+  const listRow = (x, right) => '<a href="#/exhibitions/' + x.id + '"><span>' + esc(x.title) + "<small>" + esc(x.artists) + " · " + esc(x.gallery) + "</small></span><span>" + right + "</span></a>";
+  const seg = document.getElementById("seg"), sure = document.getElementById("sure");
+  seg.innerHTML = QUESTIONS.map((q, i) => '<button type="button" data-v="' + q.k + '" aria-pressed="' + (i === 0) + '">' + q.label + '<span class="n"></span></button>').join("");
+  let key = "today";
+  function render() {
+    const a = answer(key, sure.checked);
+    seg.querySelectorAll("button").forEach((b) => (b.querySelector(".n").textContent = a.counts[b.dataset.v]));
+    document.getElementById("big").textContent = a.shown.length + "건";
+    document.getElementById("sub").textContent = a.rule;
+    document.getElementById("list").innerHTML = a.shown.length ? a.shown.map((x) =>
+      ticket(x, '<div class="stub' + (x.days > 7 ? " calm" : "") + '"><span class="n' + (x.days === 0 ? " word" : "") + '">' + (x.days === 0 ? "오늘" : x.days) + '</span><span class="l">' + (x.days === 0 ? "마지막 날" : "일 남음") + "</span></div>")).join("")
+      : '<p class="empty">이 기준에 맞는 전시가 없습니다.</p>';
+  }
+  bindSeg(seg, (v) => { key = v; render(); });
+  sure.addEventListener("change", render);
+  render();
+</script>
+</body>
+</html>

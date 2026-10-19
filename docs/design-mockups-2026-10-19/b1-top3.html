@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>B1 Barbican 추천 Top 3</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="barbican.css">
+</head>
+<body>
+<header class="top">
+  <div class="bar"><span class="mark">오늘 뭐하지</span><span class="ghost">10월 18일 (일)</span></div>
+  <nav><span>오늘</span><span>전체 전시</span><span>갤러리</span></nav>
+</header>
+<section class="hero">
+  <div class="in">
+    <h1>오늘 4개 전시가 닫혀요</h1>
+    <p class="lede">서울 갤러리 11곳 진행 중. 오늘 닫는 전시와 정보가 확인된 전시를 먼저, 갤러리당 하나씩 골랐습니다.</p>
+  </div>
+</section>
+<main class="in">
+  <h2>오늘의 추천</h2>
+  <div class="tickets three" id="picks"></div>
+  <div id="groups"></div>
+</main>
+<footer><div class="in">
+  <span>갤러리 정보 기준일 <b>2026-10-06</b></span>
+  <span>국립현대미술관 · 마지막 동기화 기록 없음</span>
+  <button type="button">MMCA 동기화</button>
+</div></footer>
+<script src="data.js"></script>
+<script src="logic.js"></script>
+<script>
+  const tagsFor = (x) => '<div class="row"><span class="tag' + (x.days === 0 ? " today" : "") + '">' + dLabel(x.days) + "</span>" + badges(x).map((b) => '<span class="tag">' + b + "</span>").join("") + "</div>";
+  const ticket = (x, stub) => '<a class="tk" href="#/exhibitions/' + x.id + '">' + stub +
+    '<div class="tb"><div class="g">' + esc(place(x)) + '</div><div class="t">' + esc(x.title) + '</div><div class="m">' + esc(x.artists) + " · " + period(x) + "</div>" + tagsFor(x) + "</div></a>";
+  const listRow = (x, right) => '<a href="#/exhibitions/' + x.id + '"><span>' + esc(x.title) + "<small>" + esc(x.artists) + " · " + esc(x.gallery) + "</small></span><span>" + right + "</span></a>";
+  document.getElementById("picks").innerHTML = top3().map((x) =>
+    ticket(x, '<div class="stub"><span class="n">' + x.top3 + '</span><span class="l">' + (x.review ? "정보 확인 필요" : "정보 확인됨") + "</span></div>")).join("");
+  document.getElementById("groups").innerHTML = GROUPS.map((g) => {
+    const xs = byDays(EXHIBITIONS.filter(g.f));
+    return '<div class="area">' + g.ko + " <small>" + xs.length + '건</small></div><div class="list">' + xs.map((x) => listRow(x, dLabel(x.days))).join("") + "</div>";
+  }).join("");
+</script>
+</body>
+</html>

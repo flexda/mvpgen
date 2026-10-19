@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>C1 추천 Top 3</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
+<link rel="stylesheet" href="stedelijk.css">
+</head>
+<body>
+<header class="bar">
+  <nav><span>전시</span><span>갤러리</span></nav>
+  <span class="cta">10월 18일 일요일</span>
+</header>
+<section class="mast">
+  <h1>오늘 뭐하지</h1>
+  <p class="sub">서울 갤러리 현재 전시 11</p>
+  <span class="sticker">오늘 4개 마감!</span>
+</section>
+<hr class="rule">
+<p class="q">오늘의 추천</p>
+<div class="band"><span>오늘 닫는 전시와 정보가 확인된 전시를 먼저, 갤러리당 하나씩</span></div>
+<hr class="rule">
+<section id="picks"></section>
+<p class="q">진행 중 전시</p>
+<hr class="rule">
+<section id="groups"></section>
+<footer>
+  <span>갤러리 정보 기준일 <b>2026-10-06</b></span>
+  <span>국립현대미술관 · 마지막 동기화 기록 없음</span>
+  <button type="button">MMCA 동기화</button>
+</footer>
+<script src="data.js"></script>
+<script>
+  const meta = (x) => '<div class="m">' + esc(x.artists) + " <span>· " + esc(place(x)) + " · " + period(x) + "</span></div>";
+  document.getElementById("picks").innerHTML = EXHIBITIONS.filter((x) => x.top3).sort((a, b) => a.top3 - b.top3).map((x) =>
+    '<a class="x" href="#/exhibitions/' + x.id + '"><span class="when num">' + x.top3 + "</span>" +
+    '<div><div class="t">' + esc(x.title) + "</div>" + meta(x) +
+    '<span class="badge green">' + (x.days === 0 ? "오늘 종료" : x.days + "일 후 종료") + "</span>" +
+    '<span class="badge">' + (x.review ? "정보 확인 필요" : "정보 확인됨") + "</span></div>" +
+    '<span class="d hide-m' + (x.days === 0 ? " today" : "") + '">' + dLabel(x.days) + "</span></a>").join("");
+
+  const md = (s) => +s.slice(5, 7) + "월 " + +s.slice(8) + "일";
+  const sorted = EXHIBITIONS.slice().sort((a, b) => a.days - b.days || a.title.localeCompare(b.title));
+  const groups = [["오늘 닫음", (x) => x.days === 0], ["이번 주에 닫음", (x) => x.days > 0 && x.days <= 7], ["더 오래 함", (x) => x.days > 7]];
+  document.getElementById("groups").innerHTML = groups.map(([name, f]) => {
+    const xs = sorted.filter(f);
+    return '<div class="band big">' + name + " " + xs.length + "</div>" + xs.map((x) =>
+      '<a class="x small" href="#/exhibitions/' + x.id + '"><span class="when' + (x.days === 0 ? " today" : "") + '">' + (x.days === 0 ? "오늘<br>마지막 날" : md(x.end) + "<br>까지") + "</span>" +
+      '<div><div class="t">' + esc(x.title) + "</div>" + meta(x) + badges(x).map((b) => '<span class="badge">' + b + "</span>").join("") + "</div>" +
+      '<span class="d hide-m">' + dLabel(x.days) + "</span></a>").join("");
+  }).join("");
+</script>
+</body>
+</html>

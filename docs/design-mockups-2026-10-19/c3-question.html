@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>C3 질문형</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
+<link rel="stylesheet" href="stedelijk.css">
+</head>
+<body>
+<header class="bar">
+  <nav><span>전시</span><span>갤러리</span></nav>
+  <span class="cta">10월 18일 일요일</span>
+</header>
+<section class="mast">
+  <h1>오늘 뭐하지</h1>
+  <p class="sub">서울 갤러리 현재 전시 11</p>
+  <span class="sticker">오늘 4개 마감!</span>
+</section>
+<hr class="rule">
+<p class="q">오늘은 어떤 전시?</p>
+<div class="opts" role="group" aria-label="고르는 기준">
+  <button type="button" data-k="today" aria-pressed="true">오늘 아니면 못 봄<span class="n"></span></button>
+  <button type="button" data-k="week">이번 주 안에<span class="n"></span></button>
+  <button type="button" data-k="slow">급하지 않음<span class="n"></span></button>
+  <button type="button" data-k="all">전부<span class="n"></span></button>
+</div>
+<div class="band">
+  <label><input type="checkbox" id="sure"> 정보가 확인된 전시만</label>
+  <span id="rule"></span>
+</div>
+<section id="list" aria-live="polite"></section>
+<footer>
+  <span>갤러리 정보 기준일 <b>2026-10-06</b></span>
+  <span>국립현대미술관 · 마지막 동기화 기록 없음</span>
+  <button type="button">MMCA 동기화</button>
+</footer>
+<script src="data.js"></script>
+<script>
+  const sets = {
+    today: { f: (x) => x.days === 0, rule: "오늘 닫는 전시" },
+    week: { f: (x) => x.days > 0 && x.days <= 7, rule: "1~7일 뒤 닫는 전시" },
+    slow: { f: (x) => x.days > 7, rule: "8일 넘게 남은 전시" },
+    all: { f: () => true, rule: "진행 중인 전시 전부, 닫는 날 순" },
+  };
+  let key = "today";
+  const sure = document.getElementById("sure");
+  const md = (s) => +s.slice(5, 7) + "월 " + +s.slice(8) + "일";
+  function render() {
+    const xs = EXHIBITIONS.filter((x) => !sure.checked || !badges(x).length).sort((a, b) => a.days - b.days || a.title.localeCompare(b.title));
+    document.querySelectorAll(".opts button").forEach((b) => (b.querySelector(".n").textContent = xs.filter(sets[b.dataset.k].f).length));
+    const shown = xs.filter(sets[key].f);
+    document.getElementById("rule").textContent = sets[key].rule + " · " + shown.length + "건";
+    document.getElementById("list").innerHTML = shown.length ? shown.map((x) =>
+      '<a class="x" href="#/exhibitions/' + x.id + '"><span class="when' + (x.days === 0 ? " today" : "") + '">' + (x.days === 0 ? "오늘<br>마지막 날" : md(x.end) + "<br>까지") + "</span>" +
+      '<div><div class="t">' + esc(x.title) + '</div><div class="m">' + esc(x.artists) + " <span>· " + esc(place(x)) + " · " + period(x) + "</span></div>" +
+      badges(x).map((b) => '<span class="badge">' + b + "</span>").join("") + '</div><span class="d hide-m">' + dLabel(x.days) + "</span></a>").join("")
+      : '<p class="empty">이 기준에 맞는 전시가 없습니다.</p>';
+  }
+  document.querySelectorAll(".opts button").forEach((b) => b.addEventListener("click", () => {
+    key = b.dataset.k;
+    document.querySelectorAll(".opts button").forEach((o) => o.setAttribute("aria-pressed", o === b));
+    render();
+  }));
+  sure.addEventListener("change", render);
+  render();
+</script>
+</body>
+</html>
