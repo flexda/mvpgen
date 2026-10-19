@@ -9,7 +9,7 @@ from mvpgen.pipeline import (STAGE_MODEL_KEYS, find_run_dir, make_slug, model_fo
 
 def test_stage_model_keys_follow_stage_table():
     assert STAGE_MODEL_KEYS == ("prd", "spec", "design", "build", "plan", "research", "critic",
-                                "prd-critic", "spec-critic", "design-critic", "build-critic", "plan-critic")
+                                "prd-critic", "spec-critic", "build-critic", "plan-critic")
 
 
 def test_resolve_settings_reads_legacy_state_and_defaults():

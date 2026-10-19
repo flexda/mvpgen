@@ -2,8 +2,8 @@ import json
 
 import pytest
 
-from mvpgen.design import (DESIGN_HEADINGS, check_design, check_directions, choose_direction, copy_candidates,
-                           list_library, pick_candidates)
+from mvpgen.design import (DESIGN_HEADINGS, check_design, check_design_md, check_directions, check_previews, choose_direction,
+                           contrast_ratio, copy_candidates, list_library, pick_candidates)
 
 CANDIDATES = ["airbnb", "nintendo-2001", "spacex"]
 
@@ -18,9 +18,9 @@ def make_library(root, brands):
 def good_concepts(**over):
     data = {
         "directions": [
-            {"id": "A", "kind": "baseline", "sources": ["airbnb"], "metaphor": "m", "first_screen": "f", "risks": "r"},
-            {"id": "B", "kind": "unexpected", "sources": ["nintendo-2001"], "metaphor": "m", "first_screen": "f", "risks": "r"},
-            {"id": "C", "kind": "unexpected", "sources": ["spacex", "airbnb"], "metaphor": "m", "first_screen": "f", "risks": "r"},
+            {"id": "A", "kind": "baseline", "sources": ["airbnb"], "metaphor": "m", "first_screen": "f", "risks": "r", "colors": {"text": "#111111", "background": "#ffffff"}},
+            {"id": "B", "kind": "unexpected", "sources": ["nintendo-2001"], "metaphor": "m", "first_screen": "f", "risks": "r", "colors": {"text": "#111111", "background": "#ffffff"}},
+            {"id": "C", "kind": "unexpected", "sources": ["spacex", "airbnb"], "metaphor": "m", "first_screen": "f", "risks": "r", "colors": {"text": "#111111", "background": "#ffffff"}},
         ],
         "chosen": "B",
         "reason": "카트리지 은유가 전시 고르기와 맞는다",
@@ -31,7 +31,7 @@ def good_concepts(**over):
 
 def good_design_md():
     body = "\n\n".join(f"{h}\n" + "내용 " * 120 for h in DESIGN_HEADINGS)
-    return '---\nname: x\ncolors:\n  ink: "#111111"\n---\n\n' + body
+    return '---\nname: x\ncolors:\n  text: "#111111"\n  background: "#ffffff"\n---\n\n' + body
 
 
 def write_run(tmp_path, concepts, design_md):
@@ -117,3 +117,44 @@ def test_check_design_md_needs_frontmatter_and_headings(tmp_path):
 def test_check_design_missing_files(tmp_path):
     problems = check_design(tmp_path, CANDIDATES)
     assert "concepts.json이 없다" in problems and "DESIGN.md가 없다" in problems
+
+
+def test_contrast_ratio_matches_wcag():
+    assert round(contrast_ratio("#000000", "#ffffff"), 2) == 21.0
+    assert contrast_ratio("#767676", "#ffffff") >= 4.5 > contrast_ratio("#777777", "#ffffff")
+    assert round(contrast_ratio("#fff", "#000"), 2) == 21.0
+
+
+def test_directions_need_readable_colors(tmp_path):
+    concepts = good_concepts()
+    concepts["directions"][1]["colors"] = {"text": "#3b82f6", "background": "#2563eb"}
+    del concepts["directions"][2]["colors"]
+    write_run(tmp_path, concepts, "")
+    problems = check_directions(tmp_path / "concepts.json", CANDIDATES)
+    assert any("방향 B의 colors의 본문 대비가" in p for p in problems)
+    assert any("방향 C의 colors에 hex 값인 text와 background" in p for p in problems)
+
+
+def test_check_previews(tmp_path):
+    (tmp_path / "previews").mkdir()
+    ok = '<main><section data-feature="F1">오늘 전시</section><section data-feature=\'F2\'>동선</section></main>'
+    (tmp_path / "previews" / "A.html").write_text(ok)
+    (tmp_path / "previews" / "B.html").write_text('<link href="https://fonts.googleapis.com/x">' + ok)
+    (tmp_path / "previews" / "C.html").write_text('<section data-feature="F1">x</section>')
+    problems = check_previews(tmp_path, ["A", "B", "C", "D"], ["F1", "F2"])
+    assert problems == [
+        "previews/B.html이 외부 리소스(http, //, @import)를 부른다. 글꼴, 이미지, CSS를 모두 파일 안에 둬라",
+        "previews/C.html에 기능 F2을 보여 주는 data-feature 요소가 없다",
+        "previews/D.html이 없다",
+    ]
+
+
+def test_provided_design_md_is_checked_loosely(tmp_path):
+    path = tmp_path / "DESIGN.md"
+    body = "\n\n".join(f"{h}\n" + "내용 " * 120 for h in DESIGN_HEADINGS)
+    # 라이브러리 파일은 ink, canvas 같은 이름을 쓴다
+    path.write_text('---\ncolors:\n  ink: "#000000"\n  canvas: "#ffffff"\n---\n\n' + body)
+    assert check_design_md(path, strict=False) == []
+    assert any("text와 background" in p for p in check_design_md(path, strict=True))
+    path.write_text('---\ncolors:\n  primary: "#000000"\n---\n\n' + body)
+    assert any("대비를 확인하지 못했다" in p for p in check_design_md(path, strict=False))

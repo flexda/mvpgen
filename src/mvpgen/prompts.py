@@ -134,25 +134,38 @@ _DESIGN_RULES = """\
 """
 
 DIRECTIONS_SYSTEM = """\
-너는 뻔한 화면을 싫어하는 아트 디렉터다. 기획 문서(PRD.md)를 받아 이 앱의 디자인 방향 3개를 제안한다.
-구현 방식(spec)은 아직 사람이 고르지 않았다. 기능은 PRD.md의 Features와 같다.
-design-candidates/에 다른 서비스의 디자인 시스템 문서(DESIGN.md 형식)가 무작위로 뽑혀 있다. 이 후보만 원천으로 쓴다.
-방향은 사람이 비교해 하나를 고른다. 너는 고르지 않는다. 현재 작업 폴더에 concepts.json 하나만 작성한다.
+너는 뻔한 화면을 싫어하는 아트 디렉터다. 기획 문서(PRD.md)를 받아 이 앱의 디자인 방향 3개와 미리보기를 만든다.
+구현 방식(spec)은 아직 사람이 고르지 않았다. 사람은 이 미리보기로 디자인만 따로 고른다. 너는 고르지 않는다.
+design-candidates/에 다른 서비스의 디자인 시스템 문서(DESIGN.md 형식)가 있다. 이 후보만 원천으로 쓴다.
+현재 작업 폴더에 concepts.json과 previews/<방향 id>.html 세 개만 작성한다.
+
+의외성이란: 이 앱의 분야에 어울리는 스타일 가운데 흔하지 않은 표현이다. 다른 분야의 디자인 언어를 억지로 옮기는 것이 아니다.
+사용자가 "이 분야답다"고 느끼면서도 처음 보는 화면이어야 한다.
 
 concepts.json:
 {
   "directions": [
-    {"id": "A", "kind": "baseline", "sources": ["후보 이름"], "metaphor": "...", "first_screen": "...", "risks": "..."},
-    {"id": "B", "kind": "unexpected", "sources": ["후보 이름"], "metaphor": "...", "first_screen": "...", "risks": "..."},
-    {"id": "C", "kind": "unexpected", "sources": ["후보 이름", "후보 이름"], "metaphor": "...", "first_screen": "...", "risks": "..."}
+    {"id": "A", "kind": "baseline", "sources": ["후보 이름"], "metaphor": "...", "first_screen": "...", "risks": "...",
+     "colors": {"text": "#hex", "background": "#hex", "accent": "#hex"}},
+    {"id": "B", "kind": "unexpected", ...},
+    {"id": "C", "kind": "unexpected", ...}
   ]
 }
 - baseline: 이 분야 사용자가 예상하는 무난한 방향. 의외안과 비교할 기준이다.
-- unexpected: 분야가 다른 후보의 디자인 언어를 이 앱의 내용으로 옮긴 방향. 두 후보를 섞어도 된다. 두 의외안은 서로도 분명히 달라야 한다.
+- unexpected: 분야에 어울리는 후보에서 흔하지 않은 표현을 끌어낸 방향. 두 후보를 섞어도 된다. 두 의외안은 서로도 분명히 달라야 한다.
+  어울리는 후보가 없으면 가장 가까운 후보를 고르고, 무엇이 맞지 않는지 risks에 적는다.
 - sources에는 design-candidates/의 파일 이름(확장자 없이)만 쓴다.
-- metaphor: 빌린 디자인 언어가 이 앱의 내용과 어떻게 이어지는지 (장식이 아니라 의미가 있어야 한다).
-- first_screen: 사용자가 첫 화면에서 보는 것을 구체적으로 묘사한다. 사람이 이 글만 읽고 고를 수 있어야 한다.
+- metaphor: 이 디자인 언어가 이 앱의 내용과 어떻게 이어지는지 (장식이 아니라 의미가 있어야 한다).
+- first_screen: 사용자가 첫 화면에서 보는 것을 구체적으로 묘사한다.
 - risks: 사용성이나 가독성이 깨질 수 있는 지점과 막는 방법.
+- colors: 본문 글자색(text)과 배경색(background)은 대비 4.5:1 이상이어야 한다. 검사기가 hex로 계산한다.
+
+미리보기 previews/<id>.html (방향마다 하나):
+- 세 미리보기는 같은 구조를 쓴다. 기능을 PRD.md의 Features 순서대로 보여 주는 중립 구조다. 디자인만 다르게 한다.
+  특정 구현 방식의 고르는 규칙(점수, 동선 등)을 넣지 않는다. 구조는 사람이 따로 고른다.
+- 기능마다 그것을 보여 주는 요소에 data-feature="F1"처럼 PRD의 feature id를 붙인다.
+- 실제 데이터로 채운다. context/ 자료가 있으면 거기서 몇 건을 옮겨 쓴다. 자리표시 문구(Lorem ipsum)를 쓰지 않는다.
+- CSS는 파일 안에 둔다. 외부 글꼴, 이미지, CSS, 스크립트를 부르지 않는다(http, //, @import 금지). 360px 폭에서 가로로 넘치지 않게 한다.
 - 후보 문서는 길다. 먼저 각 문서의 앞부분(description, Overview)만 훑고, 방향으로 쓸 후보만 끝까지 읽는다.
 
 """ + _DESIGN_RULES
@@ -164,7 +177,9 @@ DESIGN_SYSTEM = """\
 DESIGN.md: 고른 방향을 이 앱에 맞게 옮긴 디자인 시스템 문서. 원천 DESIGN.md를 복사하지 말고 번역한다.
 - 맨 앞에 YAML 프런트매터(--- ... ---)로 name, description, colors(hex), typography, spacing, rounded 토큰을 둔다.
 - 본문 제목은 다음을 이 순서로 포함한다: ## Overview, ## Colors, ## Typography, ## Layout, ## Components, ## Responsive Behavior.
+- 프런트매터 colors에 본문 글자색 text와 배경색 background를 반드시 두고, 대비를 4.5:1 이상으로 한다. 검사기가 hex로 계산한다.
 - Components에 spec.json의 feature마다 그것을 보여 줄 화면 요소를 feature id와 함께 적는다.
+- previews/<고른 방향 id>.html이 사람이 보고 고른 화면이다. 그 인상을 유지하되, 구조는 spec.json을 따른다.
 - 값은 hex, px, rem처럼 구현자가 그대로 옮길 수 있게 쓴다.
 - concepts.json의 reason에 사람이 적은 선택 이유가 있으면, 그 이유가 화면에 살아 있게 한다.
 
@@ -280,10 +295,13 @@ def spec_revise_prompt(
     )
 
 
-def directions_prompt(idea: str, candidates: list[str], context_files: list[str] | None = None) -> str:
+def directions_prompt(
+    idea: str, candidates: list[str], feature_ids: list[str], context_files: list[str] | None = None,
+) -> str:
     listing = "\n".join(f"- {c}" for c in candidates)
     prompt = (
-        f"아이디어: {idea}\n\nPRD.md를 읽고 concepts.json에 디자인 방향 3개를 작성하라.\n\n"
+        f"아이디어: {idea}\n\nPRD.md를 읽고 concepts.json에 디자인 방향 3개를, previews/에 방향마다 미리보기를 작성하라.\n"
+        f"미리보기마다 data-feature로 표시할 기능: {', '.join(feature_ids)}\n\n"
         f"# 이번 후보 (design-candidates/)\n{listing}"
     )
     if context_files:
@@ -400,7 +418,6 @@ def critic_prompt(
     target = {
         "prd": "PRD.md",
         "spec": "spec.json (사람이 고른 후보, 원래 후보는 spec-candidates/, 기획은 PRD.md)",
-        "design": "DESIGN.md (사람이 고른 방향은 concepts.json의 chosen과 reason, 원천은 design-candidates/, 기획은 PRD.md와 spec.json)",
     }.get(stage, "spec.json의 기준에 비춘 app/ 구현")
     prompt = (
         f"원래 아이디어: {idea}\n\n평가 대상: {target}\n\n루브릭:\n{rubric}\n"
@@ -413,7 +430,7 @@ def critic_prompt(
             "\n\n작업 폴더의 DESIGN.md가 이 앱의 디자인 시스템이다. app/의 CSS와 템플릿이 그 토큰과 레이아웃을 따르는지,"
             " 의외성 때문에 기능이 숨겨지지 않았는지 확인하라."
         )
-    if has_context and stage != "design":
+    if has_context:
         prompt += (
             "\n\n사용자가 미리 조사한 참고 자료가 context/에 있다. 함께 읽고, 결과물이 자료의 데이터 출처와 실제 필드를 반영했는지,"
             " 자료에 없는 데이터를 가정하지 않았는지, 실행 중 크롤링에 의존하지 않는지 확인하라."

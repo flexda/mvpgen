@@ -16,12 +16,12 @@ from mvpgen import prompts
 from mvpgen.agents import AgentRun, run_agent
 from mvpgen.context import BRIEF_NAME, list_context
 from mvpgen.critic import RoundTracker, Review, Screening, check_review_file, check_screening_file, is_accepted, load_review, load_screening
-from mvpgen.design import (check_design, check_directions, choose_direction, copy_candidates, directions_of, list_library,
-                           pick_candidates)
+from mvpgen.design import (PREVIEWS_DIRNAME, check_design, check_design_md, check_directions, check_previews, choose_direction,
+                           copy_candidates, directions_of, list_library, pick_candidates)
 from mvpgen.gates import StopGate
 from mvpgen.lessons import lessons_prompt, record_lessons
 from mvpgen.research import RESEARCH_DIRNAME, check_research
-from mvpgen.rubrics import BUILD_RUBRIC, DESIGN_RUBRIC, PRD_RUBRIC, SPEC_RUBRIC
+from mvpgen.rubrics import BUILD_RUBRIC, PRD_RUBRIC, SPEC_RUBRIC
 from mvpgen.spec import (Spec, candidate, candidate_ids, candidate_spec, candidates_have_screen, check_prd, check_spec,
                          check_spec_candidates, load_spec)
 from mvpgen.verify import free_port, verify_app
@@ -37,13 +37,15 @@ class Stage:
     rubric: str
     # critic이 앱을 띄워 볼 포트가 필요한가
     critic_port: bool = False
+    # critic 루프를 도는가. design은 사람이 미리보기로 고르고 코드 검사만 하므로 critic이 없다
+    reviewed: bool = True
 
 
 # 실행 순서대로 둔다. 이 순서가 --stage-model 키와 README 검증 기록의 순서가 된다
 STAGES: dict[str, Stage] = {s.name: s for s in (
     Stage("prd", "PRD", ("Read", "Write", "Edit", "Glob"), ("Read", "Glob", "Grep", "Write"), PRD_RUBRIC),
     Stage("spec", "Spec", ("Read", "Write", "Edit", "Glob"), ("Read", "Glob", "Grep", "Write"), SPEC_RUBRIC),
-    Stage("design", "Design", ("Read", "Write", "Edit", "Glob", "Grep"), ("Read", "Glob", "Grep", "Write"), DESIGN_RUBRIC),
+    Stage("design", "Design", ("Read", "Write", "Edit", "Glob", "Grep"), (), "", reviewed=False),
     Stage("build", "Build", ("Read", "Write", "Edit", "Glob", "Grep", "Bash"), ("Read", "Glob", "Grep", "Write", "Bash"),
           BUILD_RUBRIC, critic_port=True),
 )}
@@ -71,7 +73,8 @@ class AwaitingChoice(RuntimeError):
 LEGACY_STAGE = {"prd": "plan", "spec": "plan"}
 
 # --stage-model에 쓸 수 있는 키. critic은 모든 critic에 적용되고, 개별 critic 키가 그보다 우선한다
-STAGE_MODEL_KEYS = (*STAGES, "plan", "research", "critic", *(f"{s}-critic" for s in STAGES), "plan-critic")
+STAGE_MODEL_KEYS = (*STAGES, "plan", "research", "critic", *(f"{n}-critic" for n, s in STAGES.items() if s.reviewed),
+                    "plan-critic")
 
 
 def model_for(stage: str, stage_models: dict[str, str], default: str) -> str:
@@ -476,8 +479,10 @@ class Pipeline:
                 await self._research(env)
             screening = await self._screen(round_no)
             viable = screening.viable_ids
+            # 거르기는 _review_loop를 거치지 않으므로 여기서 지적을 교훈으로 쌓는다
+            added = sum(record_lessons(self.lessons_path, stage.name, v.issues) for v in screening.candidates)
             info["rounds"].append({"round": round_no, "viable": viable, "recommended": screening.recommended,
-                                   "scores": {v.id: v.score for v in screening.candidates}})
+                                   "scores": {v.id: v.score for v in screening.candidates}, "lessons_added": added})
             self._save()
             print(f"  screening: viable {', '.join(viable) or '없음'}"
                   + (f", 추천 {screening.recommended}" if viable else ""), flush=True)
@@ -607,21 +612,29 @@ class Pipeline:
             self.state["design"] = picked
             self._save()
         concepts = self.run_dir / "concepts.json"
-        # 방향은 한 번만 만든다. 멈춘 뒤에 --resume하면 이미 있는 방향을 쓴다
-        if not check_directions(concepts, picked["candidates"]):
+        cand_dir = self.run_dir / "spec-candidates"
+        # 기능은 모든 spec 후보가 같다(check_spec_candidates)
+        feature_ids = [f["id"] for f in candidate_spec(cand_dir, candidate_ids(cand_dir)[0])["features"]]
+
+        def check() -> tuple[bool, str]:
+            problems = check_directions(concepts, picked["candidates"])
+            if not problems:
+                problems = check_previews(self.run_dir, [str(d["id"]) for d in directions_of(concepts)], feature_ids)
+            return self._report(problems, "Design 방향")
+
+        # 방향은 한 번만 만든다. 멈춘 뒤에 --resume하면 이미 있는 방향과 미리보기를 쓴다
+        if check()[0]:
             return
         copy_candidates(library, picked["candidates"], self.run_dir)
         print(f"\n== design 후보 (seed {picked['seed']}): {', '.join(picked['candidates'])}", flush=True)
-
-        def check() -> tuple[bool, str]:
-            return self._report(check_directions(concepts, picked["candidates"]), "Design 방향")
 
         print("\n== design: 방향 3개 생성", flush=True)
         await self._agent(
             stage=f"{stage.name}-directions", round_no=1,
             system_prompt=prompts.DIRECTIONS_SYSTEM + lessons_prompt(self.lessons_path, stage.name),
-            prompt=prompts.directions_prompt(self.config.idea, picked["candidates"], list_context(self.run_dir)),
-            tools=list(stage.gen_tools), writable=[concepts], max_turns=self.config.design_max_turns,
+            prompt=prompts.directions_prompt(self.config.idea, picked["candidates"], feature_ids, list_context(self.run_dir)),
+            tools=list(stage.gen_tools), writable=[concepts, self.run_dir / PREVIEWS_DIRNAME],
+            max_turns=self.config.design_max_turns,
             gate=StopGate(f"{stage.label} 방향", check, self.config.max_gate_blocks),
         )
         ok, report = check()
@@ -685,26 +698,31 @@ class Pipeline:
             return
         if mode != "auto":
             shutil.copyfile(Path(mode), self.run_dir / "DESIGN.md")
-            info["status"] = "provided"
-            info["source"] = str(mode)
+            # 지정한 파일은 critic도 생성 검사도 거치지 않으므로, 확인할 수 있는 것만 보고 경고로 남긴다
+            warnings = check_design_md(self.run_dir / "DESIGN.md", strict=False)
+            info.update(status="provided", source=str(mode), warnings=warnings)
             self._save()
             print(f"\n== design: 지정한 DESIGN.md를 쓴다 ({mode})", flush=True)
+            for w in warnings:
+                print(f"  경고: {w}", flush=True)
             return
 
         chosen_id = self.state["choice"]["design"]["id"]
         chosen = next(d for d in directions_of(self.run_dir / "concepts.json") if str(d["id"]) == chosen_id)
-        system = prompts.DESIGN_SYSTEM + lessons_prompt(self.lessons_path, stage.name)
-        writable = [self.run_dir / "DESIGN.md"]
-
-        async def generate(feedback: str | None, round_no: int) -> None:
-            await self._agent(
-                stage=stage.name, round_no=round_no, system_prompt=system,
-                prompt=prompts.design_prompt(self.config.idea, chosen, feedback, list_context(self.run_dir)),
-                tools=list(stage.gen_tools), writable=writable, max_turns=self.config.design_max_turns,
-                gate=self._gate(stage, self._design_check),
-            )
-
-        await self._review_loop(stage, paths=writable, generate=generate, check=self._design_check)
+        # 사람이 미리보기로 이미 골랐으므로 critic 없이 코드 검사(Stop gate)만 거친다
+        await self._agent(
+            stage=stage.name, round_no=1, system_prompt=prompts.DESIGN_SYSTEM + lessons_prompt(self.lessons_path, stage.name),
+            prompt=prompts.design_prompt(self.config.idea, chosen, None, list_context(self.run_dir)),
+            tools=list(stage.gen_tools), writable=[self.run_dir / "DESIGN.md"], max_turns=self.config.design_max_turns,
+            gate=self._gate(stage, self._design_check),
+        )
+        ok, report = self._design_check()
+        if not ok:
+            info.update(status="failed", last_check=report)
+            self._save()
+            raise StageFailed(f"DESIGN.md가 자동 검사를 통과하지 못했다:\n{report}")
+        info["status"] = "passed"
+        self._save()
 
     async def build(self) -> None:
         stage = STAGES["build"]
@@ -875,7 +893,8 @@ def _choice_readme(
     if wants_design and "design" not in choice:
         lines += ["## 디자인 방향 (concepts.json, 원천은 design-candidates/)", ""]
         for d in directions_of(run_dir / "concepts.json"):
-            lines += [f"### {d['id']} ({d['kind']}) - {', '.join(d['sources'])}", "", f"- 은유: {d['metaphor']}",
+            lines += [f"### {d['id']} ({d['kind']}) - {', '.join(d['sources'])}", "",
+                      f"- 미리보기: {PREVIEWS_DIRNAME}/{d['id']}.html", f"- 은유: {d['metaphor']}",
                       f"- 첫 화면: {d['first_screen']}", f"- 위험: {d['risks']}", ""]
         cmd.append('--choose-design <id> --design-reason "고른 이유"')
 

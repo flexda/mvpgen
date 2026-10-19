@@ -21,7 +21,7 @@ SERVER = (
 )
 
 
-DESIGN_MD = '---\ncolors:\n  ink: "#111111"\n---\n\n' + "\n\n".join(f"{h}\n" + "내용 " * 120 for h in DESIGN_HEADINGS)
+DESIGN_MD = '---\ncolors:\n  text: "#111111"\n  background: "#ffffff"\n---\n\n' + "\n\n".join(f"{h}\n" + "내용 " * 120 for h in DESIGN_HEADINGS)
 
 
 def make_library(root, n=5):
@@ -78,9 +78,16 @@ def make_fake_agent(calls, fail_first=("prd-critic",), screen=None):
             first = await gate({"hook_event_name": "Stop", "stop_hook_active": False}, None, None)
             assert first["decision"] == "block" and "concepts.json" in first["reason"]
             cands = sorted(p.stem for p in (cwd / "design-candidates").glob("*.md"))
-            dirs = [{"id": i, "kind": k, "sources": [cands[n]], "metaphor": "m", "first_screen": "f", "risks": "r"}
+            dirs = [{"id": i, "kind": k, "sources": [cands[n]], "metaphor": "m", "first_screen": "f", "risks": "r",
+                     "colors": {"text": "#111111", "background": "#fafafa"}}
                     for n, (i, k) in enumerate([("A", "baseline"), ("B", "unexpected"), ("C", "unexpected")])]
             (cwd / "concepts.json").write_text(json.dumps({"directions": dirs}))
+            # 방향만 있고 미리보기가 없으면 아직 막혀야 한다
+            second = await gate({"hook_event_name": "Stop", "stop_hook_active": True}, None, None)
+            assert second["decision"] == "block" and "previews/A.html" in second["reason"]
+            (cwd / "previews").mkdir(exist_ok=True)
+            for i in "ABC":
+                (cwd / "previews" / f"{i}.html").write_text(f'<main><section data-feature="F1">할 일 {i}</section></main>')
             assert await gate({"hook_event_name": "Stop", "stop_hook_active": True}, None, None) == {}
         elif stage == "design":
             first = await gate({"hook_event_name": "Stop", "stop_hook_active": False}, None, None)
@@ -298,6 +305,9 @@ async def test_design_auto_pauses_for_choice_then_resumes(tmp_path, monkeypatch)
     readme = (run_dir / "README.md").read_text()
     # viable 구현 후보가 b 하나라 디자인 방향만 고르면 된다
     assert "### C (unexpected)" in readme and "--resume run" in readme and "--choose-design <id>" in readme
+    assert "- 미리보기: previews/C.html" in readme
+    # 미리보기는 기능 id를 받아 만든다
+    assert "data-feature로 표시할 기능: F1" in calls[-1][1]
     assert "--choose-spec" not in readme and "구현 방식: b로 정해짐 (only_viable)" in readme
 
     # 2차: 고른 방향으로 DESIGN.md를 쓰고 끝까지 간다. 방향은 다시 만들지 않는다
@@ -306,7 +316,8 @@ async def test_design_auto_pauses_for_choice_then_resumes(tmp_path, monkeypatch)
     pipe = Pipeline(config, run_dir)
     assert await pipe.run() is True
     stages = [c[0] for c in calls]
-    assert stages == ["design", "design-critic", "build", "build-critic"]
+    # 사람이 미리보기로 골랐으므로 DESIGN.md는 critic 없이 코드 검사만 거친다
+    assert stages == ["design", "build", "build-critic"]
     concepts = json.loads((run_dir / "concepts.json").read_text())
     assert concepts["chosen"] == "C" and concepts["chosen_by"] == "human" and concepts["reason"] == "의외라서"
     report = json.loads((run_dir / "run_report.json").read_text())
@@ -369,6 +380,8 @@ async def test_design_provided_file_skips_agent(tmp_path, monkeypatch):
     assert (run_dir / "DESIGN.md").read_text() == "# 내가 고른 디자인"
     report = json.loads((run_dir / "run_report.json").read_text())
     assert report["stages"]["design"]["status"] == "provided"
+    # 지정한 파일은 critic을 거치지 않으니, 확인할 수 있는 것을 경고로 남긴다
+    assert any("프런트매터" in w for w in report["stages"]["design"]["warnings"])
     assert "DESIGN.md" in next(p for s, p in calls if s == "build")
 
 
@@ -507,6 +520,8 @@ async def test_no_viable_spec_regenerates_then_fails(tmp_path, monkeypatch):
     assert "모두 실행할 수 없다고" in second_spec and "범위가 넓다" in second_spec
     report = json.loads((run_dir / "run_report.json").read_text())
     assert "viable" in report["error"] and report["stages"]["screen"]["status"] == "failed"
+    # 거르기의 major 지적도 교훈으로 쌓인다
+    assert "- [spec] 범위가 넓다" in (tmp_path / "lessons.md").read_text()
 
 
 async def test_resume_repairs_broken_spec_json(tmp_path, monkeypatch):
