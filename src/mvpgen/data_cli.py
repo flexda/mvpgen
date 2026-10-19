@@ -112,6 +112,11 @@ def generate(
     typer.echo(f"Claude 인증: {auth}")
     typer.echo(f"API 키: {', '.join(sorted(mvp_env)) or '없음'}")
     typer.echo(f"수집 페이지: 중간 검사 {check_pages}, 최종 {final_pages or '전체'}")
+    problems = verifier.preflight(run_dir)
+    if problems:
+        typer.echo("DB 사전 점검 실패 (Claude는 아직 부르지 않았다):\n" + "\n".join(f"  - {p}" for p in problems), err=True)
+        raise typer.Exit(2)
+    typer.echo("DB 사전 점검 통과")
     pipe = DataPipeline(config, run_dir, verifier.verify, check_pages=check_pages, final_pages=final_pages or None)
     ok = asyncio.run(pipe.run())
     raise typer.Exit(0 if ok else 1)

@@ -63,6 +63,7 @@ class FakeDb:
         self.applied: set[str] = set()
         self._counts = list(counts)
         self._violations = violations
+        self.existing: set[str] = set()
 
     def applied_versions(self):
         return set(self.applied)
@@ -72,6 +73,9 @@ class FakeDb:
 
     def violations(self, query):
         return self._violations
+
+    def schemas(self, names):
+        return set(self.existing)
 
 
 def make_verifier(db):
@@ -132,3 +136,39 @@ def test_verify_stops_before_db_when_locked_file_edited(tmp_path):
     (app / "supabase/migrations/20261019000000_init.sql").write_text("create schema if not exists core;")
     result = v.verify(app, spec(), tmp_path, "c2", 2)
     assert [s.name for s in result.steps] == ["migrations"] and "고쳤다" in result.steps[0].output_tail
+
+
+def test_push_success_without_history_fails_loudly(tmp_path):
+    # 적용 기록의 버전 형식이 가정과 다르면 아무것도 잠기지 않는다. 조용히 넘어가지 않아야 한다
+    app = make_app(tmp_path, {"20261019000000_init.sql": "create schema if not exists raw;"})
+    db = FakeDb([[0, 0, 0]])
+    v = make_verifier(db)
+    v.push = lambda app_dir, env: StepResult("db push", True, 0, "", 0.0)
+    result = v.verify(app, spec(), tmp_path, "c", 2)
+    assert result.failed_step.name == "db push" and "적용 기록" in result.failed_step.output_tail
+    assert load_ledger(tmp_path) == {}
+
+
+def test_preflight_fresh_and_resume(tmp_path):
+    db = FakeDb([])
+    v = make_verifier(db)
+    assert v.preflight(tmp_path) == []
+
+    db.applied, db.existing = {"20261019000000"}, {"raw"}
+    problems = v.preflight(tmp_path)
+    assert len(problems) == 2 and "이전 실행" in problems[0]
+
+    (tmp_path / "db").mkdir()
+    (tmp_path / "db" / "ledger.json").write_text(json.dumps({"20261019000000_init.sql": "0" * 64}))
+    assert v.preflight(tmp_path) == []
+    db.applied.add("20261019000009")
+    assert "20261019000009" in v.preflight(tmp_path)[0]
+
+
+def test_preflight_masks_connection_error(tmp_path):
+    class Down(FakeDb):
+        def applied_versions(self):
+            raise OSError(f"cannot connect {URL}")
+
+    problems = make_verifier(Down([])).preflight(tmp_path)
+    assert "접속하지 못했다" in problems[0] and "s3cr" not in problems[0]

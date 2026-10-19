@@ -338,7 +338,13 @@ PR #1을 main에 병합(`69c9be6`)한 뒤 같은 입력으로 두 번 실행했�
 | `contexts/mmca-api/` | 첫 실험용 자료. MMCA API 문서만 둔다 |
 | `secrets/supabase.env.example` | `SUPABASE_DB_URL` 형식 |
 
-테스트 121개 통과(새 19개). 실제 Supabase와 에이전트 실행은 아직 하지 않았다.
+| 사전 점검 | `mvpdata`가 Claude를 부르기 전에 DB 접속과 상태를 본다. 새 실행은 마이그레이션 기록과 raw/core/mart가 없어야 하고, 이어하기는 기록이 `db/ledger.json`과 같아야 한다 |
+| 잠금 자기 검사 | push가 성공했는데 적용 기록에 없는 파일이 있으면 실패로 본다. 버전 형식 가정이 틀려 아무것도 잠기지 않는 일을 막는다 |
+| `scripts/smoke_mvpdata.py` | LLM 없이 실제 DB 경로를 확인하는 가짜 앱 검사. 빈 프로젝트에서만 돌고, 끝나면 자기가 만든 raw, core와 기록 한 줄을 지운다 |
+
+테스트 124개 통과(새 22개). 모두 가짜 DB와 가짜 `db push`로 돌았다. 실제 Supabase와 에이전트 실행은 아직 하지 않았다.
+
+A안의 결과로, 같은 프로젝트에서 두 번째 실행을 하면 첫 실행의 기록과 테이블이 남아 사전 점검에서 멈춘다. 실행 사이 정리 방법(실행마다 새 프로젝트 또는 사용자가 직접 돌리는 초기화 명령)은 사용자가 정한다.
 
 ### 확인한 사실
 
@@ -367,7 +373,8 @@ PR #1을 main에 병합(`69c9be6`)한 뒤 같은 입력으로 두 번 실행했�
 
 1. supabase.com에서 새 프로젝트를 만든다.
 2. 대시보드 Connect > Session pooler 문자열을 main checkout의 `secrets/supabase.env`에 `SUPABASE_DB_URL=...`로 넣는다. 비밀번호의 특수문자는 퍼센트 인코딩한다.
-3. 실행은 확인받은 뒤 worktree에서 `uv run mvpdata ... --secrets /Users/reflectdata/Project/loop-2-test/secrets`로 한다(worktree에는 실제 secrets가 없다).
+3. 첫 에이전트 실행 전에 `scripts/smoke_mvpdata.py`로 실제 DB 경로를 확인한다(확인받은 뒤).
+4. 실행은 확인받은 뒤 worktree에서 `uv run mvpdata ... --secrets /Users/reflectdata/Project/loop-2-test/secrets`로 한다(worktree에는 실제 secrets가 없다).
 
 ## 커밋
 

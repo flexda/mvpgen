@@ -110,6 +110,7 @@ class Database(Protocol):
     def applied_versions(self) -> set[str]: ...
     def counts(self, tables: list[str]) -> dict[str, int | None]: ...
     def violations(self, query: str) -> int: ...
+    def schemas(self, names: tuple[str, ...]) -> set[str]: ...
 
 
 class PgDatabase:
@@ -142,6 +143,11 @@ class PgDatabase:
                 q = sql.SQL("select count(*) from {}.{}").format(sql.Identifier(schema), sql.Identifier(name))
                 out[t] = conn.execute(q).fetchone()[0]
         return out
+
+    def schemas(self, names: tuple[str, ...]) -> set[str]:
+        with self._connect() as conn:
+            rows = conn.execute("select nspname from pg_namespace where nspname = any(%s)", (list(names),))
+            return {r[0] for r in rows}
 
     def violations(self, query: str) -> int:
         body = query.strip().rstrip(";")
@@ -181,20 +187,52 @@ class DbVerifier:
         cmd = f"{shlex.quote(self.supabase_bin)} db push --db-url {shlex.quote(self.db_url)} --workdir . --yes"
         return run_step("db push", cmd, app_dir, PUSH_TIMEOUT_S, env)
 
-    def _lock_applied(self, app_dir: Path, run_dir: Path) -> str:
-        """DB에 기록된 버전의 파일을 잠근다. db push가 중간에 실패해도 실제로 적용된 파일까지만 잠근다."""
+    def _lock_applied(self, app_dir: Path, run_dir: Path, pushed: bool) -> tuple[bool, str]:
+        """DB에 기록된 버전의 파일을 잠근다. db push가 중간에 실패해도 실제로 적용된 파일까지만 잠근다.
+
+        push가 성공했는데 적용 기록에 없는 파일이 있으면 실패로 본다. 버전 형식 가정이 틀려 아무것도 잠기지 않는 일을 막는다.
+        """
         assert self.db is not None
         try:
             applied = self.db.applied_versions()
         except Exception as e:
-            return mask(f"적용 기록을 읽지 못했다: {e!r}", self.secrets)
+            return False, mask(f"적용 기록을 읽지 못했다: {e!r}", self.secrets)
         ledger = load_ledger(run_dir)
+        unrecorded = []
         for p in migration_files(app_dir):
             m = MIGRATION_NAME.match(p.name)
-            if m and m.group(1) in applied and p.name not in ledger:
-                ledger[p.name] = _sha(p)
+            if not m:
+                continue
+            if m.group(1) in applied:
+                ledger.setdefault(p.name, _sha(p))
+            else:
+                unrecorded.append(p.name)
         save_ledger(run_dir, ledger)
-        return f"적용된 마이그레이션 {len(ledger)}개를 잠갔다"
+        if pushed and unrecorded:
+            return False, (f"db push는 성공했는데 적용 기록(supabase_migrations.schema_migrations)에 없는 파일이 있다: {unrecorded}. "
+                           f"기록된 버전 예: {sorted(applied)[:5]}. mvpgen의 잠금 가정을 확인해야 한다")
+        return True, f"적용된 마이그레이션 {len(ledger)}개를 잠갔다"
+
+    def preflight(self, run_dir: Path) -> list[str]:
+        """에이전트를 부르기 전에 DB 접속과 상태를 확인한다. 새 실행은 빈 DB, 이어하기는 이 실행의 잠금 목록과 같은 기록이어야 한다."""
+        assert self.db is not None
+        try:
+            applied = self.db.applied_versions()
+            existing = self.db.schemas(LAYERS)
+        except Exception as e:
+            return [mask(f"DB에 접속하지 못했다: {e!r}. Session pooler 문자열과 비밀번호 퍼센트 인코딩을 확인하라", self.secrets)]
+        ledger_versions = {m.group(1) for n in load_ledger(run_dir) if (m := MIGRATION_NAME.match(n))}
+        if not ledger_versions:
+            problems = []
+            if applied:
+                problems.append(f"새 실행인데 DB에 마이그레이션 기록이 {len(applied)}개 있다 (이전 실행의 것). 새 프로젝트를 쓰거나 기록을 정리하라")
+            if existing:
+                problems.append(f"새 실행인데 DB에 스키마 {sorted(existing)}가 이미 있다")
+            return problems
+        if applied != ledger_versions:
+            return [f"DB의 마이그레이션 기록이 이 실행의 잠금 목록(db/ledger.json)과 다르다. "
+                    f"DB에만 있음 {sorted(applied - ledger_versions)}, 잠금에만 있음 {sorted(ledger_versions - applied)}"]
+        return []
 
     def verify(self, app_dir: Path, spec: DataSpec, run_dir: Path, label: str, page_cap: int | None) -> VerifyResult:
         assert self.db is not None
@@ -231,7 +269,9 @@ class DbVerifier:
             return
 
         push = self._masked(self._db_push(app_dir, app_env({})))
-        push.output_tail += "\n" + self._lock_applied(app_dir, run_dir)
+        locked, msg = self._lock_applied(app_dir, run_dir, push.ok)
+        push.output_tail += "\n" + msg
+        push.ok = push.ok and locked
         result.steps.append(push)
         if not push.ok:
             return
