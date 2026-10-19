@@ -1,6 +1,6 @@
 import json
 
-from mvpgen.critic import Review, RoundTracker, check_review_file, is_accepted, load_review
+from mvpgen.critic import Review, RoundTracker, check_review_file, check_screening_file, is_accepted, load_review
 from mvpgen.lessons import lessons_prompt, merge_lessons, record_lessons
 
 
@@ -99,13 +99,31 @@ def test_merge_lessons_creates_missing_dst(tmp_path):
     assert "- [build] X -> x" in dst.read_text()
 
 
-def test_review_winner_must_be_a_candidate(tmp_path):
-    path = tmp_path / "spec-r1.json"
-    path.write_text(json.dumps({"pass": True, "score": 90, "summary": "b가 낫다", "winner": "c"}))
-    assert check_review_file(path)[0]
-    ok, msg = check_review_file(path, ["a", "b"])
-    assert not ok and "winner" in msg
-    assert check_review_file(path, ["a", "b", "c"])[0]
+def test_screening_file_needs_one_verdict_per_candidate_and_viable_recommendation(tmp_path):
+    path = tmp_path / "spec-screen-r1.json"
+    verdict = {"viable": True, "score": 80, "summary": "s"}
+
+    def write(candidates, recommended):
+        path.write_text(json.dumps({"summary": "s", "candidates": candidates, "recommended": recommended}))
+
+    write([{"id": "a", **verdict}, {"id": "b", **verdict, "viable": False}], "a")
+    assert check_screening_file(path, ["a", "b"])[0]
+    write([{"id": "a", **verdict}], "a")
+    assert "후보마다 하나씩" in check_screening_file(path, ["a", "b"])[1]
+    write([{"id": "a", **verdict}, {"id": "b", **verdict, "viable": False}], "b")
+    assert "viable 후보 중 하나" in check_screening_file(path, ["a", "b"])[1]
+    # viable이 하나도 없어도 형식은 통과다. 다시 만들지는 파이프라인이 정한다
+    write([{"id": "a", **verdict, "viable": False}], "a")
+    assert check_screening_file(path, ["a"])[0]
+
+
+def test_verdict_clean_needs_viable_threshold_and_no_critical():
+    from mvpgen.critic import Verdict
+
+    assert Verdict(id="a", viable=True, score=85, summary="s").clean(80)
+    assert not Verdict(id="a", viable=True, score=75, summary="s").clean(80)
+    assert not Verdict(id="a", viable=True, score=95, summary="s", issues=[CRIT]).clean(80)
+    assert not Verdict(id="a", viable=False, score=95, summary="s").clean(80)
 
 
 def test_lessons_prompt_reads_several_stage_names(tmp_path):

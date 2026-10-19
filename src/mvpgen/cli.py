@@ -48,8 +48,12 @@ def generate(
     research: Annotated[bool | None, typer.Option(
         "--research/--no-research", help="Spec 후보마다 웹 검색으로 조사해 research/에 남긴다. 기본 켬, --resume에서 생략하면 처음 값"
     )] = None,
-    choose: Annotated[str | None, typer.Option(help="design auto가 방향 3개를 만들고 멈춘 실행에서 고를 방향 id. --resume과 함께 쓴다")] = None,
-    reason: Annotated[str | None, typer.Option(help="--choose로 그 방향을 고른 이유. state.json과 concepts.json에 남아 실험 기록이 된다")] = None,
+    choose_spec: Annotated[str | None, typer.Option(
+        help="고를 구현 후보 id(멈춘 실행을 --resume할 때). 새 실행에서는 recommended만 받아 critic 추천으로 멈추지 않고 간다"
+    )] = None,
+    spec_reason: Annotated[str | None, typer.Option(help="그 구현 후보를 고른 이유. state.json에 남아 실험 기록이 된다")] = None,
+    choose_design: Annotated[str | None, typer.Option(help="고를 디자인 방향 id(멈춘 실행을 --resume할 때)")] = None,
+    design_reason: Annotated[str | None, typer.Option(help="그 디자인 방향을 고른 이유. state.json과 concepts.json에 남는다")] = None,
     gha_oidc: Annotated[bool, typer.Option(help="GitHub Actions에서 OIDC 토큰을 자동으로 받아 갱신")] = True,
     oidc_audience: Annotated[str, typer.Option(help="GitHub OIDC 토큰의 audience (federation 규칙과 같아야 함)")] = DEFAULT_AUDIENCE,
 ) -> None:
@@ -62,12 +66,15 @@ def generate(
     except ValueError as e:
         raise typer.BadParameter(str(e), param_hint="--stage-model") from e
 
-    if (choose or reason) and not resume:
-        raise typer.BadParameter("--choose와 --reason은 방향 선택을 기다리는 실행을 --resume할 때만 쓴다", param_hint="--choose")
+    if not resume and (choose_design or (choose_spec and choose_spec != "recommended")):
+        raise typer.BadParameter("후보 id는 선택을 기다리는 실행을 --resume할 때만 고를 수 있다. 새 실행에서는 --choose-spec recommended만 쓴다",
+                                 param_hint="--choose-spec/--choose-design")
     if brief and resume:
         raise typer.BadParameter("--brief는 새 실행에만 쓴다. 이어 하는 실행은 처음 brief.md를 그대로 쓴다", param_hint="--brief")
-    if reason and not choose:
-        raise typer.BadParameter("--reason은 --choose와 함께 쓴다", param_hint="--reason")
+    if spec_reason and not choose_spec:
+        raise typer.BadParameter("--spec-reason은 --choose-spec과 함께 쓴다", param_hint="--spec-reason")
+    if design_reason and not choose_design:
+        raise typer.BadParameter("--design-reason은 --choose-design과 함께 쓴다", param_hint="--design-reason")
 
     out = out.resolve()
     secrets = secrets.resolve()
@@ -82,8 +89,8 @@ def generate(
         run_dir = found
         state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
         idea = idea or state["idea"]
-        if choose and state.get("stages", {}).get("design", {}).get("status") != "awaiting_choice":
-            raise typer.BadParameter(f"{run_dir.name}은 디자인 방향 선택을 기다리는 실행이 아니다", param_hint="--choose")
+        if (choose_spec or choose_design) and state.get("stages", {}).get("choice", {}).get("status") != "awaiting_choice":
+            raise typer.BadParameter(f"{run_dir.name}은 선택을 기다리는 실행이 아니다", param_hint="--choose-spec/--choose-design")
     elif not idea and not brief:
         raise typer.BadParameter("아이디어나 --brief를 입력하거나 --resume을 지정하라", param_hint="IDEA")
     else:
@@ -167,7 +174,8 @@ def generate(
         max_fix_rounds=max_fix_rounds, pass_threshold=pass_threshold,
         protected_paths=protected, mvp_env=mvp_env, lessons_path=lessons.resolve(),
         design=design, design_library=design_library.resolve(), design_candidates=design_candidates,
-        design_seed=design_seed, choose=choose, choose_reason=reason, spec_candidates=spec_candidates, research=research,
+        design_seed=design_seed, choose_spec=choose_spec, spec_reason=spec_reason,
+        choose_design=choose_design, design_reason=design_reason, spec_candidates=spec_candidates, research=research,
     )
     typer.echo(f"아이디어: {idea}\n폴더: {run_dir}\n모델: {model} (effort {effort}), 예산 ${budget:.2f}")
     if stage_models:

@@ -36,6 +36,9 @@ def test_model_for_resolution():
     assert [model_for(st, legacy, "d") for st in ("prd", "spec", "prd-critic", "spec-critic", "build-critic")] == [
         "p", "s", "pc", "pc", "c"]
     assert model_for("research-a", legacy, "d") == "s"
+    # 거르기 critic은 spec-critic, 없으면 plan-critic 설정을 따른다
+    assert model_for("spec-screen-critic", {"spec-critic": "sc", "critic": "c"}, "d") == "sc"
+    assert model_for("spec-screen-critic", legacy, "d") == "pc"
     assert model_for("research-b", {**legacy, "research": "r"}, "d") == "r"
 
 

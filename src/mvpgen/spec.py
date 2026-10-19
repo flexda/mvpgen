@@ -131,6 +131,7 @@ def check_spec_candidates(cand_dir: Path, n: int) -> list[str]:
         return [f"{cand_dir.name}/에 후보 JSON이 {n}개 있어야 한다 (지금 {len(ids)}개: {ids})"]
     problems: list[str] = []
     feature_sets: dict[str, list[str]] = {}
+    smoke_kinds: dict[str, str] = {}
     approaches: dict[str, str] = {}
     for cid in ids:
         name = f"{cand_dir.name}/{cid}.json"
@@ -146,11 +147,25 @@ def check_spec_candidates(cand_dir: Path, n: int) -> list[str]:
         problems += errs
         if not errs:
             feature_sets[cid] = sorted(f["id"] for f in data["spec"]["features"])
+            smoke_kinds[cid] = "url" if data["spec"]["smoke"].get("url") else "command"
     if len(set(map(tuple, feature_sets.values()))) > 1:
         problems.append(f"후보마다 feature id가 다르다 {feature_sets}. 기능은 PRD.md를 따라 모든 후보가 같아야 한다")
+    if len(set(smoke_kinds.values())) > 1:
+        # 화면이 있는 앱인지(디자인 단계를 돌릴지)는 사람이 고르기 전에 정해야 한다
+        problems.append(f"후보마다 smoke 종류가 다르다 {smoke_kinds}. 모두 url(화면 있는 앱)이거나 모두 command여야 한다")
     if len(set(approaches.values())) != len(approaches):
         problems.append("후보의 approach가 서로 같다. decision 축에서 서로 다른 선택을 하라")
     return problems
+
+
+def candidates_have_screen(cand_dir: Path) -> bool:
+    """검사를 통과한 후보들이 화면(smoke.url)이 있는 앱인가. 후보끼리 smoke 종류가 같으므로 하나만 본다."""
+    first = candidate_ids(cand_dir)[0]
+    return bool(candidate_spec(cand_dir, first)["smoke"].get("url"))
+
+
+def candidate(cand_dir: Path, cid: str) -> dict:
+    return json.loads((cand_dir / f"{cid}.json").read_text(encoding="utf-8"))
 
 
 def candidate_spec(cand_dir: Path, cid: str) -> dict:

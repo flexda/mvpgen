@@ -96,3 +96,12 @@ def test_spec_candidate_schema_error_names_the_file(tmp_path, spec_dict):
     problems = check_spec_candidates(cand, 2)
     assert any("spec-candidates/a.json에 decision" in p for p in problems)
     assert any("spec-candidates/a.json의 spec 스키마 오류" in p for p in problems)
+
+
+def test_spec_candidates_need_the_same_smoke_kind(tmp_path, spec_dict):
+    cand = tmp_path / "spec-candidates"
+    write_candidates(cand, spec_dict)
+    data = json.loads((cand / "b.json").read_text())
+    data["spec"]["smoke"] = {"command": "echo ok", "expect": "ok"}
+    (cand / "b.json").write_text(json.dumps(data))
+    assert any("smoke 종류가 다르다" in p for p in check_spec_candidates(cand, 2))

@@ -14,7 +14,7 @@ def paused_run(out, **state_over):
         "idea": "x", "model": "m0", "stage_models": {"build": "b"},
         "settings": {"model": "m0", "stage_models": {"build": "b"}, "effort": "low", "budget_usd": 3.0, "design": "auto",
                      "spec_candidates": 3},
-        "stages": {"design": {"status": "awaiting_choice", "rounds": []}}, "runs": [], "cost_usd": 0.0,
+        "stages": {"choice": {"status": "awaiting_choice", "rounds": []}}, "runs": [], "cost_usd": 0.0,
     }
     state.update(state_over)
     (run_dir / "state.json").write_text(json.dumps(state))
@@ -45,28 +45,34 @@ def invoke(tmp_path, monkeypatch, *args, awaiting=True):
 
 def test_resume_with_choice_keeps_first_run_settings_and_exits_awaiting(tmp_path, monkeypatch):
     paused_run(tmp_path / "out")
-    result, config = invoke(tmp_path, monkeypatch, "--resume", "run", "--choose", "C", "--reason", "의외라서")
+    result, config = invoke(tmp_path, monkeypatch, "--resume", "run", "--choose-spec", "b", "--spec-reason", "동선이 낯설다",
+                            "--choose-design", "C", "--design-reason", "의외라서")
     assert result.exit_code == EXIT_AWAITING_CHOICE, result.output
     assert (config.model, config.stage_models, config.effort, config.budget_usd) == ("m0", {"build": "b"}, "low", 3.0)
     assert config.spec_candidates == 3
-    assert (config.choose, config.choose_reason) == ("C", "의외라서")
+    assert (config.choose_spec, config.spec_reason, config.choose_design, config.design_reason) == (
+        "b", "동선이 낯설다", "C", "의외라서")
 
 
 def test_resume_flags_override_saved_settings(tmp_path, monkeypatch):
     paused_run(tmp_path / "out")
-    _, config = invoke(tmp_path, monkeypatch, "--resume", "run", "--choose", "C", "--stage-model", "critic=c", "--budget", "8")
+    _, config = invoke(tmp_path, monkeypatch, "--resume", "run", "--choose-design", "C", "--stage-model", "critic=c",
+                       "--budget", "8")
     assert config.stage_models == {"build": "b", "critic": "c"} and config.budget_usd == 8.0 and config.model == "m0"
 
 
 def test_choose_rejected_when_run_is_not_waiting(tmp_path, monkeypatch):
-    paused_run(tmp_path / "out", stages={"design": {"status": "passed", "rounds": []}})
-    result, config = invoke(tmp_path, monkeypatch, "--resume", "run", "--choose", "C")
+    paused_run(tmp_path / "out", stages={"choice": {"status": "done", "rounds": []}})
+    result, config = invoke(tmp_path, monkeypatch, "--resume", "run", "--choose-spec", "a")
     assert result.exit_code == 2 and config is None
 
 
-def test_choose_needs_resume(tmp_path, monkeypatch):
-    result, config = invoke(tmp_path, monkeypatch, "idea", "--choose", "C")
-    assert result.exit_code == 2 and config is None
+def test_choosing_an_id_needs_resume_but_recommended_does_not(tmp_path, monkeypatch):
+    for args in (["--choose-design", "C"], ["--choose-spec", "a"], ["--spec-reason", "x"]):
+        result, config = invoke(tmp_path, monkeypatch, "idea", *args)
+        assert result.exit_code == 2 and config is None, args
+    result, config = invoke(tmp_path, monkeypatch, "idea", "--choose-spec", "recommended", awaiting=False)
+    assert result.exit_code == 1 and config.choose_spec == "recommended"
 
 
 def test_new_run_uses_defaults_and_failure_exits_1(tmp_path, monkeypatch):

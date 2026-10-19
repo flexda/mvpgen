@@ -42,8 +42,14 @@ def fake_spec():
     }
 
 
-def make_fake_agent(calls, fail_first=("prd-critic",)):
-    """fail_first에 든 critic은 1라운드에 불합격을 준다."""
+ISSUE = {"severity": "major", "location": "spec-candidates/b.json", "problem": "범위가 넓다", "fix": "기능을 줄여라"}
+# 기본 거르기: a는 제외, b만 viable이라 사람이 고를 구현 후보가 없다
+SCREEN = {"a": {"viable": False, "score": 40}, "b": {"viable": True, "score": 90}}
+
+
+def make_fake_agent(calls, fail_first=("prd-critic",), screen=None):
+    """fail_first에 든 critic은 1라운드에 불합격을 준다. screen은 후보별 거르기 판정이다."""
+    screen = screen or SCREEN
     async def fake_run_agent(*, stage, cwd, gate=None, prompt="", **kw):
         calls.append((stage, prompt))
         rnd = int(str(kw["log_path"]).rsplit("-r", 1)[1].split(".")[0])
@@ -91,12 +97,16 @@ def make_fake_agent(calls, fail_first=("prd-critic",)):
             assert await gate({"hook_event_name": "Stop", "stop_hook_active": True}, None, None) == {}
         elif stage.endswith("-critic"):
             path = cwd / "reviews" / f"{stage.removesuffix('-critic')}-r{rnd}.json"
+            if stage == "spec-screen-critic":
+                verdicts = [{"id": cid, "summary": f"후보 {cid}", **v} for cid, v in screen.items()]
+                viable = [cid for cid, v in screen.items() if v["viable"]]
+                path.write_text(json.dumps({"summary": "비교", "candidates": verdicts, "recommended": viable[-1] if viable else "a"}))
+                assert gate.checker()[0]
+                return AgentRun(stage, True, "success", 0.1, 3, 0.01, gate=gate.stats())
             passed = not (stage in fail_first and rnd == 1)
             review = {"pass": passed, "score": 90 if passed else 60, "summary": "평가",
                       "issues": [] if passed else [{"severity": "major", "location": "PRD.md",
                                                     "problem": "범위가 넓다", "fix": "기능을 줄여라"}]}
-            if stage == "spec-critic" and not (cwd / "spec.json").exists():
-                review["winner"] = "b"
             path.write_text(json.dumps(review))
             ok, _ = gate.checker()
             assert ok
@@ -115,12 +125,12 @@ async def test_full_flow_offline(tmp_path, monkeypatch):
     assert await Pipeline(config, run_dir).run() is True
 
     stages = [c[0] for c in calls]
-    assert stages == ["prd", "prd-critic", "prd", "prd-critic", "spec", "research-a", "research-b", "spec-critic", "build", "build-critic"]
+    assert stages == ["prd", "prd-critic", "prd", "prd-critic", "spec", "research-a", "research-b", "spec-screen-critic", "build", "build-critic"]
     # 두 번째 prd 호출에는 critic 지적이 전달되어야 한다
     assert "범위가 넓다" in calls[2][1]
-    # spec critic은 두 후보를 보고 하나를 골랐고, 그 후보가 spec.json이 되었다
+    # spec critic은 두 후보를 거르기만 했고, viable 후보가 b 하나라 b가 spec.json이 되었다
     critic_prompt = calls[7][1]
-    assert "spec-candidates/a.json" in critic_prompt and "spec-candidates/b.json" in critic_prompt and "winner" in critic_prompt
+    assert "spec-candidates/a.json" in critic_prompt and "spec-candidates/b.json" in critic_prompt
     # 조사 결과가 후보 옆에 근거로 붙는다
     assert "research/a.md" in critic_prompt and "research/b.md" in critic_prompt
     assert json.loads((run_dir / "spec.json").read_text())["summary"] == "후보 b"
@@ -128,8 +138,10 @@ async def test_full_flow_offline(tmp_path, monkeypatch):
     report = json.loads((run_dir / "run_report.json").read_text())
     assert report["success"] is True
     assert [r["score"] for r in report["stages"]["prd"]["rounds"]] == [60, 90]
-    assert report["stages"]["spec"]["rounds"][0]["winner"] == "b"
-    assert report["spec_choice"]["winner"] == "b" and sorted(report["spec_choice"]["order"]) == ["a", "b"]
+    assert report["choice"]["spec"] == {"id": "b", "by": "only_viable", "reason": None}
+    assert sorted(report["stages"]["screen"]["order"]) == ["a", "b"]
+    # 거르기에서 지적 없이 통과한 후보라 spec critic을 다시 부르지 않았다
+    assert report["stages"]["spec"] == {"status": "passed", "rounds": [], "from_screening": True}
     assert report["stages"]["build"]["status"] == "passed"
     assert report["stages"]["verify"]["status"] == "passed"
     build_run = next(r for r in report["runs"] if r["stage"] == "build")
@@ -181,7 +193,7 @@ async def test_fallback_folder_renamed_after_spec(tmp_path, monkeypatch):
     # Build 이후 산출물이 모두 새 폴더에 있어야 추적이 이어진다
     assert (new_dir / "app" / "server.py").exists()
     assert (new_dir / "reviews" / "build-r1.json").exists()
-    assert (new_dir / "snapshots" / "spec").is_dir() and (new_dir / "snapshots" / "build").is_dir()
+    assert (new_dir / "snapshots" / "prd").is_dir() and (new_dir / "snapshots" / "build").is_dir()
     report = json.loads((new_dir / "run_report.json").read_text())
     assert report["renamed_from"] == "20261012-153000-mvp"
     assert report["run_dir"] == "20261012-153000-fake-todo"
@@ -197,7 +209,7 @@ async def test_brief_reaches_plan_and_critics(tmp_path, monkeypatch):
     (run_dir / "brief.md").write_text("# 할 일 목록\n- 하지 않을 것: 로그인")
 
     assert await Pipeline(RunConfig(idea="할 일 목록", out_dir=tmp_path, budget_usd=5), run_dir).run() is True
-    for stage in ("prd", "prd-critic", "spec", "spec-critic", "build-critic"):
+    for stage in ("prd", "prd-critic", "spec", "spec-screen-critic", "build-critic"):
         assert "# 요구 원문 (brief.md)" in next(p for s, p in calls if s == stage), stage
     assert json.loads((run_dir / "run_report.json").read_text())["brief"] == "brief.md"
 
@@ -223,7 +235,7 @@ async def test_context_reaches_plan_build_and_critic_after_rename(tmp_path, monk
 
     # 이름이 바뀐 뒤 Build 단계에도 자료 목록이 전달되어야 한다
     assert (pipe.run_dir / "context" / "exhibitions.csv").exists()
-    for stage in ("prd", "prd-critic", "spec", "spec-critic", "build", "build-critic"):
+    for stage in ("prd", "prd-critic", "spec", "spec-screen-critic", "build", "build-critic"):
         prompt = next(p for s, p in calls if s == stage)
         assert "context/" in prompt, stage
     assert "context/exhibitions.csv" in next(p for s, p in calls if s == "build")
@@ -278,17 +290,19 @@ async def test_design_auto_pauses_for_choice_then_resumes(tmp_path, monkeypatch)
     pipe = Pipeline(config, run_dir)
     assert await pipe.run() is False
     assert pipe.awaiting_choice
-    assert [c[0] for c in calls] == ["prd", "prd-critic", "prd", "prd-critic", "spec", "research-a", "research-b", "spec-critic", "design-directions"]
+    assert [c[0] for c in calls] == ["prd", "prd-critic", "prd", "prd-critic", "spec", "research-a", "research-b", "spec-screen-critic", "design-directions"]
     report = json.loads((run_dir / "run_report.json").read_text())
     assert report["status"] == "awaiting_choice" and report["error"] is None
     assert report["design"]["seed"] == 7 and len(report["design"]["candidates"]) == 3
     assert all(c in calls[-1][1] for c in report["design"]["candidates"])
     readme = (run_dir / "README.md").read_text()
-    assert "## C (unexpected)" in readme and "--resume run --choose <id>" in readme
+    # viable 구현 후보가 b 하나라 디자인 방향만 고르면 된다
+    assert "### C (unexpected)" in readme and "--resume run" in readme and "--choose-design <id>" in readme
+    assert "--choose-spec" not in readme and "구현 방식: b로 정해짐 (only_viable)" in readme
 
     # 2차: 고른 방향으로 DESIGN.md를 쓰고 끝까지 간다. 방향은 다시 만들지 않는다
     calls.clear()
-    config.choose, config.choose_reason = "C", "의외라서"
+    config.choose_design, config.design_reason = "C", "의외라서"
     pipe = Pipeline(config, run_dir)
     assert await pipe.run() is True
     stages = [c[0] for c in calls]
@@ -297,7 +311,7 @@ async def test_design_auto_pauses_for_choice_then_resumes(tmp_path, monkeypatch)
     assert concepts["chosen"] == "C" and concepts["chosen_by"] == "human" and concepts["reason"] == "의외라서"
     report = json.loads((run_dir / "run_report.json").read_text())
     assert report["status"] == "success"
-    assert report["design"]["choice"] == {"id": "C", "kind": "unexpected", "reason": "의외라서"}
+    assert report["choice"]["design"] == {"id": "C", "kind": "unexpected", "reason": "의외라서"}
     assert report["stages"]["design"]["status"] == "passed"
     # 고른 방향의 원천이 Design 프롬프트에, DESIGN.md 안내가 Build와 Build critic 프롬프트에 들어가야 한다
     c_source = next(d for d in concepts["directions"] if d["id"] == "C")["sources"][0]
@@ -315,7 +329,7 @@ async def test_design_unknown_choice_keeps_waiting(tmp_path, monkeypatch):
                        design_library=make_library(tmp_path / "lib"), design_candidates=3)
     assert await Pipeline(config, run_dir).run() is False
 
-    config.choose = "Z"
+    config.choose_design = "Z"
     pipe = Pipeline(config, run_dir)
     assert await pipe.run() is False
     report = json.loads((run_dir / "run_report.json").read_text())
@@ -323,7 +337,7 @@ async def test_design_unknown_choice_keeps_waiting(tmp_path, monkeypatch):
     assert report["status"] == "awaiting_choice" and "'Z'는 방향 id가 아니다" in report["error"]
     assert pipe.awaiting_choice
     readme = (run_dir / "README.md").read_text()
-    assert "직전 선택 오류" in readme and "## B (unexpected)" in readme
+    assert "직전 선택 오류" in readme and "### B (unexpected)" in readme
 
 
 async def test_design_resume_keeps_candidates(tmp_path, monkeypatch):
@@ -332,7 +346,7 @@ async def test_design_resume_keeps_candidates(tmp_path, monkeypatch):
     run_dir.mkdir()
     lib = make_library(tmp_path / "lib", n=10)
     config = RunConfig(idea="x", out_dir=tmp_path, budget_usd=5, design="auto", design_library=lib, design_candidates=3,
-                       choose="A")
+                       choose_design="A")
     pipe = Pipeline(config, run_dir)
     pipe.state["design"] = {"seed": 1, "candidates": ["brand2", "brand5", "brand9"]}
     pipe._save()
@@ -401,15 +415,16 @@ async def test_stage_models_reach_each_session(tmp_path, monkeypatch):
     # plan은 prd와 spec 양쪽에 쓰인다
     assert models == {"prd": {"plan-model"}, "prd-critic": {"critic-model"}, "spec": {"plan-model"},
                       "research-a": {"plan-model"}, "research-b": {"plan-model"},
-                      "spec-critic": {"critic-model"}, "build": {"default-model"}, "build-critic": {"bc-model"}}
+                      "spec-screen-critic": {"critic-model"}, "build": {"default-model"}, "build-critic": {"bc-model"}}
     report = json.loads((run_dir / "run_report.json").read_text())
     assert report["stage_models"] == config.stage_models
     assert [(r["stage"], r["model"]) for r in report["runs"]][:2] == [("prd", "plan-model"), ("prd-critic", "critic-model")]
 
 
-async def test_spec_revision_edits_only_the_chosen_spec(tmp_path, monkeypatch):
+async def test_chosen_spec_with_screening_issues_is_refined(tmp_path, monkeypatch):
     calls = []
-    fake = make_fake_agent(calls, fail_first=("spec-critic",))
+    screen = {"a": {"viable": False, "score": 40}, "b": {"viable": True, "score": 70, "issues": [ISSUE]}}
+    fake = make_fake_agent(calls, fail_first=(), screen=screen)
     writables = {}
 
     async def recording(**kw):
@@ -423,18 +438,75 @@ async def test_spec_revision_edits_only_the_chosen_spec(tmp_path, monkeypatch):
     (run_dir / "brief.md").write_text("# 할 일 목록")
     assert await Pipeline(RunConfig(idea="할 일 목록", out_dir=tmp_path, budget_usd=5), run_dir).run() is True
 
-    assert [c[0] for c in calls][:8] == ["prd", "prd-critic", "spec", "research-a", "research-b", "spec-critic", "spec", "spec-critic"]
-    # 개정 세션도 고른 후보, 참고 자료, brief를 안다
-    for needle in ("spec-candidates/b.json", "context/data.csv", "brief.md"):
+    assert [c[0] for c in calls][:8] == ["prd", "prd-critic", "spec", "research-a", "research-b", "spec-screen-critic",
+                                         "spec", "spec-critic"]
+    # 개정 세션은 거르기에서 이 후보에 남은 지적과 함께, 고른 후보, 참고 자료, brief를 안다
+    for needle in ("범위가 넓다", "spec-candidates/b.json", "context/data.csv", "brief.md"):
         assert needle in calls[6][1], needle
-    # 1라운드는 후보 폴더를, 2라운드는 고른 spec.json만 쓸 수 있다
+    # 후보를 만들 때는 후보 폴더를, 고친 뒤에는 고른 spec.json만 쓸 수 있다
     assert writables["spec"] == [["spec-candidates"], ["spec.json"]]
-    assert "범위가 넓다" in calls[6][1]
-    # 2라운드 critic은 후보를 다시 고르지 않는다
-    assert "winner" not in calls[7][1] and "spec-candidates/a.json" not in calls[7][1]
+    assert "spec-candidates/a.json" not in calls[7][1]
     assert json.loads((run_dir / "spec.json").read_text())["summary"] == "후보 b (고침)"
+
+
+async def test_two_viable_specs_pause_for_a_human_choice(tmp_path, monkeypatch):
+    calls = []
+    screen = {"a": {"viable": True, "score": 85}, "b": {"viable": True, "score": 90}}
+    monkeypatch.setattr(pipeline_mod, "run_agent", make_fake_agent(calls, fail_first=(), screen=screen))
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    config = RunConfig(idea="할 일 목록", out_dir=tmp_path, budget_usd=5)
+
+    pipe = Pipeline(config, run_dir)
+    assert await pipe.run() is False and pipe.awaiting_choice
+    assert [c[0] for c in calls][-1] == "spec-screen-critic"
+    readme = (run_dir / "README.md").read_text()
+    # 구현 후보마다 결정, 선택, 점수, 조사로 본 위험을 보여 주고, 디자인 방향은 묻지 않는다(design off)
+    assert "### a (viable, 85점)" in readme and "### b (추천, viable, 90점)" in readme
+    assert "- 선택: MMCA API 실시간" in readme and "조사로 본 위험" in readme
+    assert "--choose-spec <id>" in readme and "--choose-design" not in readme
+
+    # 고르지 않은 것을 고르면 대기가 남는다
+    calls.clear()
+    config.choose_spec = "z"
+    pipe = Pipeline(config, run_dir)
+    assert await pipe.run() is False and pipe.awaiting_choice and calls == []
+
+    config.choose_spec, config.spec_reason = "a", "실시간이 낫다"
+    pipe = Pipeline(config, run_dir)
+    assert await pipe.run() is True
+    assert json.loads((run_dir / "spec.json").read_text())["summary"] == "후보 a"
     report = json.loads((run_dir / "run_report.json").read_text())
-    assert [r.get("winner") for r in report["stages"]["spec"]["rounds"]] == ["b", None]
+    assert report["choice"]["spec"] == {"id": "a", "by": "human", "reason": "실시간이 낫다"}
+
+
+async def test_recommended_choice_runs_without_pausing(tmp_path, monkeypatch):
+    calls = []
+    screen = {"a": {"viable": True, "score": 85}, "b": {"viable": True, "score": 90}}
+    monkeypatch.setattr(pipeline_mod, "run_agent", make_fake_agent(calls, fail_first=(), screen=screen))
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    config = RunConfig(idea="할 일 목록", out_dir=tmp_path, budget_usd=5, choose_spec="recommended")
+    assert await Pipeline(config, run_dir).run() is True
+    report = json.loads((run_dir / "run_report.json").read_text())
+    assert report["choice"]["spec"]["id"] == "b" and report["choice"]["spec"]["by"] == "recommended"
+
+
+async def test_no_viable_spec_regenerates_then_fails(tmp_path, monkeypatch):
+    calls = []
+    screen = {"a": {"viable": False, "score": 30, "issues": [ISSUE]}, "b": {"viable": False, "score": 20}}
+    monkeypatch.setattr(pipeline_mod, "run_agent", make_fake_agent(calls, fail_first=(), screen=screen))
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    config = RunConfig(idea="할 일 목록", out_dir=tmp_path, budget_usd=5, max_review_rounds=1)
+    assert await Pipeline(config, run_dir).run() is False
+    stages = [c[0] for c in calls]
+    # 지적을 반영해 후보와 조사를 처음부터 다시 만든다
+    assert stages.count("spec") == 2 and stages.count("research-a") == 2 and stages.count("spec-screen-critic") == 2
+    second_spec = [p for s, p in calls if s == "spec"][1]
+    assert "모두 실행할 수 없다고" in second_spec and "범위가 넓다" in second_spec
+    report = json.loads((run_dir / "run_report.json").read_text())
+    assert "viable" in report["error"] and report["stages"]["screen"]["status"] == "failed"
 
 
 async def test_resume_repairs_broken_spec_json(tmp_path, monkeypatch):
@@ -456,9 +528,17 @@ async def test_resume_repairs_broken_spec_json(tmp_path, monkeypatch):
     broken = fake_spec()
     del broken["intent"]
     (run_dir / "spec.json").write_text(json.dumps(broken))
+    (run_dir / "spec-candidates").mkdir()
+    (run_dir / "spec-candidates" / "b.json").write_text(json.dumps({"decision": "d", "approach": "x", "spec": fake_spec()}))
+    (run_dir / "reviews").mkdir()
+    (run_dir / "reviews" / "spec-screen-r1.json").write_text(json.dumps({
+        "summary": "s", "recommended": "b", "candidates": [{"id": "b", "viable": True, "score": 90, "summary": "좋다"}]}))
     (run_dir / "state.json").write_text(json.dumps({
-        "idea": "할 일 목록", "stages": {"prd": {"status": "passed", "rounds": []}, "spec": {"status": "failed", "rounds": []}},
-        "spec": {"winner": "b", "order": ["a", "b"]}, "runs": [], "cost_usd": 0.0,
+        "idea": "할 일 목록", "runs": [], "cost_usd": 0.0,
+        "stages": {"prd": {"status": "passed", "rounds": []}, "spec": {"status": "failed", "rounds": []},
+                   "screen": {"status": "passed", "rounds": [], "review": "reviews/spec-screen-r1.json"},
+                   "choice": {"status": "done", "rounds": []}},
+        "choice": {"spec": {"id": "b", "by": "human", "reason": None}},
     }))
 
     assert await Pipeline(RunConfig(idea="할 일 목록", out_dir=tmp_path, budget_usd=5), run_dir).run() is True
@@ -483,7 +563,7 @@ async def test_resume_reuses_candidates_and_finished_research(tmp_path, monkeypa
         "idea": "할 일 목록", "stages": {"prd": {"status": "passed", "rounds": []}}, "runs": [], "cost_usd": 0.0}))
 
     assert await Pipeline(RunConfig(idea="할 일 목록", out_dir=tmp_path, budget_usd=5), run_dir).run() is True
-    assert [c[0] for c in calls][:2] == ["research-b", "spec-critic"]
+    assert [c[0] for c in calls][:2] == ["research-b", "spec-screen-critic"]
 
 
 async def test_no_research_skips_web_sessions(tmp_path, monkeypatch):
@@ -494,7 +574,7 @@ async def test_no_research_skips_web_sessions(tmp_path, monkeypatch):
     config = RunConfig(idea="할 일 목록", out_dir=tmp_path, budget_usd=5, research=False)
     assert await Pipeline(config, run_dir).run() is True
     assert not any(s.startswith("research-") for s, _ in calls)
-    assert "research/" not in next(p for s, p in calls if s == "spec-critic")
+    assert "research/" not in next(p for s, p in calls if s == "spec-screen-critic")
 
 
 async def test_research_sessions_get_web_tools_and_one_writable_file(tmp_path, monkeypatch):
@@ -533,5 +613,5 @@ async def test_critic_only_points_at_existing_research(tmp_path, monkeypatch):
 
     config = RunConfig(idea="할 일 목록", out_dir=tmp_path, budget_usd=5, research=False)
     assert await Pipeline(config, run_dir).run() is True
-    critic_prompt = next(p for s, p in calls if s == "spec-critic")
+    critic_prompt = next(p for s, p in calls if s == "spec-screen-critic")
     assert "research/a.md" in critic_prompt and "research/b.md" not in critic_prompt

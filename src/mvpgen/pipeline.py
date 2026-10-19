@@ -15,14 +15,15 @@ from typing import Any
 from mvpgen import prompts
 from mvpgen.agents import AgentRun, run_agent
 from mvpgen.context import BRIEF_NAME, list_context
-from mvpgen.critic import RoundTracker, Review, check_review_file, is_accepted, load_review
+from mvpgen.critic import RoundTracker, Review, Screening, check_review_file, check_screening_file, is_accepted, load_review, load_screening
 from mvpgen.design import (check_design, check_directions, choose_direction, copy_candidates, directions_of, list_library,
                            pick_candidates)
 from mvpgen.gates import StopGate
 from mvpgen.lessons import lessons_prompt, record_lessons
 from mvpgen.research import RESEARCH_DIRNAME, check_research
 from mvpgen.rubrics import BUILD_RUBRIC, DESIGN_RUBRIC, PRD_RUBRIC, SPEC_RUBRIC
-from mvpgen.spec import Spec, candidate_ids, candidate_spec, check_prd, check_spec, check_spec_candidates, load_spec
+from mvpgen.spec import (Spec, candidate, candidate_ids, candidate_spec, candidates_have_screen, check_prd, check_spec,
+                         check_spec_candidates, load_spec)
 from mvpgen.verify import free_port, verify_app
 
 @dataclass(frozen=True)
@@ -63,7 +64,7 @@ class StageFailed(RuntimeError):
 
 
 class AwaitingChoice(RuntimeError):
-    """사람이 고를 차례라 실행을 멈춘다. 실패가 아니다. --resume --choose로 이어 간다."""
+    """사람이 고를 차례라 실행을 멈춘다. 실패가 아니다. --resume --choose-spec/--choose-design으로 이어 간다."""
 
 
 # 단계가 prd와 spec으로 나뉘기 전 이름. --stage-model과 lessons.md의 plan 값을 두 단계가 이어 쓴다
@@ -74,12 +75,13 @@ STAGE_MODEL_KEYS = (*STAGES, "plan", "research", "critic", *(f"{s}-critic" for s
 
 
 def model_for(stage: str, stage_models: dict[str, str], default: str) -> str:
-    """세션 이름(prd, build-fix1, spec-critic 등)에 쓸 모델. build-fixN, design-directions는 앞 단계 설정을 따른다.
-    prd와 spec은 따로 지정하지 않으면 plan 값을 쓴다."""
+    """세션 이름(prd, build-fix1, spec-critic 등)에 쓸 모델. build-fixN, design-directions는 앞 단계 설정을 따르고,
+    spec-screen-critic은 spec-critic 설정을 따른다. prd와 spec은 따로 지정하지 않으면 plan 값을 쓴다."""
     if stage.endswith("-critic"):
-        legacy = LEGACY_STAGE.get(stage.removesuffix("-critic"))
-        return (stage_models.get(stage) or (legacy and stage_models.get(f"{legacy}-critic"))
-                or stage_models.get("critic") or default)
+        base = stage.removesuffix("-critic").split("-", 1)[0]
+        legacy = LEGACY_STAGE.get(base)
+        return (stage_models.get(stage) or stage_models.get(f"{base}-critic")
+                or (legacy and stage_models.get(f"{legacy}-critic")) or stage_models.get("critic") or default)
     base = stage.split("-", 1)[0]
     if base == "research":
         # 조사 세션(research-a 등)은 따로 지정하지 않으면 spec 설정을 따른다
@@ -138,9 +140,12 @@ class RunConfig:
     design_library: Path | None = None
     design_candidates: int = 8
     design_seed: int | None = None
-    # design auto에서 사람이 고른 방향 id와 이유. 방향을 만든 뒤 멈춘 실행을 --resume으로 이어 갈 때 준다
-    choose: str | None = None
-    choose_reason: str | None = None
+    # 사람이 고른 구현 후보(spec)와 디자인 방향, 각각의 이유. 고를 차례에 멈춘 실행을 --resume으로 이어 갈 때 준다.
+    # choose_spec="recommended"는 critic의 추천을 그대로 쓴다(멈추지 않는 실행용)
+    choose_spec: str | None = None
+    spec_reason: str | None = None
+    choose_design: str | None = None
+    design_reason: str | None = None
 
 
 # 실행 설정 중 --resume에서 플래그를 생략하면 처음 실행의 값을 이어 쓰는 것과 그 기본값
@@ -268,7 +273,7 @@ class Pipeline:
 
     @property
     def awaiting_choice(self) -> bool:
-        return self.state["stages"].get("design", {}).get("status") == "awaiting_choice"
+        return self.state["stages"].get("choice", {}).get("status") == "awaiting_choice"
 
     @property
     def spent(self) -> float:
@@ -317,11 +322,11 @@ class Pipeline:
     def _prd_check(self) -> tuple[bool, str]:
         return self._report(check_prd(self.run_dir), "PRD")
 
-    def _spec_check(self) -> tuple[bool, str]:
-        # 후보를 고르기 전에는 후보들을, 고른 뒤에는 spec.json을 검사한다
-        if (self.run_dir / "spec.json").exists():
-            return self._report(check_spec(self.run_dir), "Spec")
+    def _candidates_check(self) -> tuple[bool, str]:
         return self._report(check_spec_candidates(self.run_dir / "spec-candidates", self.config.spec_candidates), "Spec 후보")
+
+    def _spec_check(self) -> tuple[bool, str]:
+        return self._report(check_spec(self.run_dir), "Spec")
 
     def _design_check(self) -> tuple[bool, str]:
         problems = check_design(self.run_dir, self.state["design"]["candidates"])
@@ -340,15 +345,13 @@ class Pipeline:
         generate: Callable[[str | None, int], Any],
         check: Callable[[], tuple[bool, str]],
         fix: Callable[[str, int, int], Any] | None = None,
-        winners: Callable[[], list[str] | None] | None = None,
-        on_review: Callable[[Review], None] | None = None,
+        initial_feedback: str | None = None,
     ) -> Review:
-        """winners가 후보 id 목록을 돌려주는 라운드에서는 critic이 그중 하나를 review의 winner로 고른다.
-        on_review는 라운드 스냅샷을 찍기 전에 불린다(고른 후보를 산출물로 옮길 때 쓴다)."""
+        """initial_feedback을 주면 1라운드 생성부터 그 지적을 반영한다(이미 있는 산출물을 고치는 경우)."""
         stage = spec.name
         info = self._stage(stage)
         tracker = RoundTracker(paths, self.run_dir, self.run_dir / "snapshots" / stage)
-        feedback: str | None = None
+        feedback: str | None = initial_feedback
         last: Review | None = None
 
         for round_no in range(1, self.config.max_review_rounds + 2):
@@ -372,9 +375,7 @@ class Pipeline:
             review_rel = f"reviews/{stage}-r{round_no}.json"
             review_path = self.run_dir / review_rel
             review_path.parent.mkdir(exist_ok=True)
-            choices = winners() if winners else None
-            critic_gate = StopGate(f"{stage} review", lambda: check_review_file(review_path, choices),
-                                   self.config.max_gate_blocks)
+            critic_gate = StopGate(f"{stage} review", lambda: check_review_file(review_path), self.config.max_gate_blocks)
             port = free_port() if spec.critic_port else None
             await self._agent(
                 stage=f"{stage}-critic",
@@ -382,26 +383,23 @@ class Pipeline:
                 system_prompt=prompts.CRITIC_SYSTEM,
                 prompt=prompts.critic_prompt(stage, self.config.idea, spec.rubric, review_rel, port,
                                           has_context=bool(list_context(self.run_dir)),
-                                          has_design=(self.run_dir / "DESIGN.md").exists(), has_brief=self._has_brief,
-                                          candidates=choices, researched=self._researched(choices)),
+                                          has_design=(self.run_dir / "DESIGN.md").exists(), has_brief=self._has_brief),
                 tools=list(spec.critic_tools),
                 writable=[review_path],
                 max_turns=self.config.critic_max_turns,
                 gate=critic_gate,
             )
-            ok_file, msg = check_review_file(review_path, choices)
+            ok_file, msg = check_review_file(review_path)
             if not ok_file:
                 raise StageFailed(f"{stage} critic이 유효한 review를 남기지 못했다: {msg}")
             review = load_review(review_path)
-            if on_review:
-                on_review(review)
             accepted = is_accepted(review, self.config.pass_threshold)
             rolled_back = tracker.record(round_no, review)
             added = record_lessons(self.lessons_path, stage, review.issues)
             info["rounds"].append({
                 "round": round_no, "score": review.score, "pass": review.passed, "accepted": accepted,
                 "critical": review.critical_count, "issues": len(review.issues), "rolled_back": rolled_back,
-                "lessons_added": added, **({"winner": review.winner} if choices else {}),
+                "lessons_added": added,
             })
             self._save()
             verdict = "합격" if accepted else "불합격"
@@ -443,66 +441,122 @@ class Pipeline:
 
         await self._review_loop(stage, paths=writable, generate=generate, check=self._prd_check)
 
-    async def spec(self) -> None:
-        """1라운드는 후보를 만들고 critic이 하나를 골라 spec.json으로 옮긴다. 2라운드부터는 spec.json만 고친다."""
+    async def screen_specs(self) -> None:
+        """구현 후보를 만들고 조사한 뒤 critic이 거른다. 고르지는 않는다. viable 후보가 없으면 지적을 반영해 다시 만든다."""
+        info = self._stage("screen")
+        if self._done("screen"):
+            return
+        stage = STAGES["spec"]
+        cand_dir = self.run_dir / "spec-candidates"
+        env = prompts.env_note(sorted(self.config.mvp_env))
+        system = prompts.SPEC_SYSTEM + env + lessons_prompt(self.lessons_path, stage.name, LEGACY_STAGE[stage.name])
+        feedback: str | None = None
+
+        for round_no in range(1, self.config.max_review_rounds + 2):
+            if feedback is not None:
+                # 다시 만든 후보에 예전 조사 결과가 붙지 않게 지운다
+                for d in (cand_dir, self.run_dir / RESEARCH_DIRNAME):
+                    shutil.rmtree(d, ignore_errors=True)
+            # --resume에서 이미 검사를 통과한 후보가 있으면 다시 만들지 않는다
+            if not self._candidates_check()[0]:
+                print(f"\n== spec 후보 라운드 {round_no}: 생성", flush=True)
+                await self._agent(
+                    stage=stage.name, round_no=round_no, system_prompt=system,
+                    prompt=prompts.spec_prompt(self.config.idea, self.config.spec_candidates, list_context(self.run_dir),
+                                               self._has_brief, feedback),
+                    tools=list(stage.gen_tools), writable=[cand_dir], max_turns=self.config.plan_max_turns,
+                    gate=self._gate(stage, self._candidates_check),
+                )
+                ok, report = self._candidates_check()
+                if not ok:
+                    info.update(status="failed", last_check=report)
+                    self._save()
+                    raise StageFailed(f"spec 후보가 자동 검사를 통과하지 못했다:\n{report}")
+            if self.config.research:
+                await self._research(env)
+            screening = await self._screen(round_no)
+            viable = screening.viable_ids
+            info["rounds"].append({"round": round_no, "viable": viable, "recommended": screening.recommended,
+                                   "scores": {v.id: v.score for v in screening.candidates}})
+            self._save()
+            print(f"  screening: viable {', '.join(viable) or '없음'}"
+                  + (f", 추천 {screening.recommended}" if viable else ""), flush=True)
+            if viable:
+                info.update(status="passed", review=f"reviews/spec-screen-r{round_no}.json")
+                self._save()
+                return
+            feedback = screening.feedback()
+
+        info["status"] = "failed"
+        self._save()
+        raise StageFailed("실행할 수 있는(viable) spec 후보가 없다. reviews/spec-screen-*.json 참고")
+
+    async def _screen(self, round_no: int) -> Screening:
+        order = candidate_ids(self.run_dir / "spec-candidates")
+        # 위치 편향을 줄이려고 critic에게 보여 줄 순서를 섞고 기록한다
+        random.SystemRandom().shuffle(order)
+        self._stage("screen")["order"] = order
+        review_rel = f"reviews/spec-screen-r{round_no}.json"
+        review_path = self.run_dir / review_rel
+        review_path.parent.mkdir(exist_ok=True)
+        print(f"\n== spec 후보 라운드 {round_no}: critic 거르기", flush=True)
+        await self._agent(
+            stage="spec-screen-critic", round_no=round_no, system_prompt=prompts.SCREEN_SYSTEM,
+            prompt=prompts.screen_prompt(self.config.idea, STAGES["spec"].rubric, review_rel, order,
+                                         self._researched(order), has_context=bool(list_context(self.run_dir)),
+                                         has_brief=self._has_brief),
+            tools=list(STAGES["spec"].critic_tools), writable=[review_path], max_turns=self.config.critic_max_turns,
+            gate=StopGate("spec screening", lambda: check_screening_file(review_path, order), self.config.max_gate_blocks),
+        )
+        ok, msg = check_screening_file(review_path, order)
+        if not ok:
+            raise StageFailed(f"spec critic이 유효한 screening을 남기지 못했다: {msg}")
+        return load_screening(review_path)
+
+    def _screening(self) -> Screening:
+        return load_screening(self.run_dir / self._stage("screen")["review"])
+
+    async def refine_spec(self) -> None:
+        """사람이 고른 후보를 spec.json으로 옮기고, 거르기에서 지적이 남았으면 고친다."""
         stage = STAGES["spec"]
         if self._done(stage.name):
             return
-        cand_dir = self.run_dir / "spec-candidates"
         spec_path = self.run_dir / "spec.json"
-        lessons = lessons_prompt(self.lessons_path, stage.name, LEGACY_STAGE[stage.name])
+        chosen = self.state["choice"]["spec"]["id"]
+        if not spec_path.exists():
+            spec_path.write_text(json.dumps(candidate_spec(self.run_dir / "spec-candidates", chosen), ensure_ascii=False,
+                                            indent=2), encoding="utf-8")
+        verdict = self._screening().verdict(chosen)
+        info = self._stage(stage.name)
+        if verdict.clean(self.config.pass_threshold) and self._spec_check()[0]:
+            info.update(status="passed", from_screening=True)
+            self._save()
+            print(f"\n== spec: 후보 {chosen}는 거르기에서 지적 없이 통과해 그대로 쓴다", flush=True)
+            return
         env = prompts.env_note(sorted(self.config.mvp_env))
-        info = self.state.setdefault("spec", {})
+        system = (prompts.SPEC_REVISE_SYSTEM + env
+                  + lessons_prompt(self.lessons_path, stage.name, LEGACY_STAGE[stage.name]))
 
         async def generate(feedback: str | None, round_no: int) -> None:
-            if not spec_path.exists():
-                # --resume에서 이미 검사를 통과한 후보가 있으면 다시 만들지 않는다
-                if not self._spec_check()[0]:
-                    await self._agent(
-                        stage=stage.name, round_no=round_no, system_prompt=prompts.SPEC_SYSTEM + env + lessons,
-                        prompt=prompts.spec_prompt(self.config.idea, self.config.spec_candidates,
-                                                   list_context(self.run_dir), self._has_brief),
-                        tools=list(stage.gen_tools), writable=[cand_dir], max_turns=self.config.plan_max_turns,
-                        gate=self._gate(stage, self._spec_check),
-                    )
-                if self.config.research and self._spec_check()[0]:
-                    await self._research(env)
+            # 개정이 중간에 끊겨 spec.json이 깨졌으면 검사 결과를 지적 앞에 붙여 함께 고친다.
+            # --resume으로 다시 들어와 고칠 것이 없으면 평가만 다시 받는다
+            ok, report = self._spec_check()
+            if not ok:
+                feedback = report + (f"\n\n{feedback}" if feedback else "")
+            elif feedback is None:
                 return
-            if feedback is None:
-                # --resume으로 고른 뒤에 다시 들어왔다. spec.json이 검사를 통과하면 평가만 다시 받고,
-                # 개정이 중간에 끊겨 깨졌으면 검사 결과를 지적으로 삼아 고친다
-                ok, report = self._spec_check()
-                if ok:
-                    return
-                feedback = report
             await self._agent(
-                stage=stage.name, round_no=round_no, system_prompt=prompts.SPEC_REVISE_SYSTEM + env + lessons,
-                prompt=prompts.spec_revise_prompt(self.config.idea, info["winner"], feedback,
-                                                  list_context(self.run_dir), self._has_brief),
+                stage=stage.name, round_no=round_no, system_prompt=system,
+                prompt=prompts.spec_revise_prompt(self.config.idea, chosen, feedback, list_context(self.run_dir),
+                                                  self._has_brief),
                 tools=list(stage.gen_tools), writable=[spec_path], max_turns=self.config.plan_max_turns,
                 gate=self._gate(stage, self._spec_check),
             )
 
-        def winners() -> list[str] | None:
-            if spec_path.exists():
-                return None
-            # 위치 편향을 줄이려고 critic에게 보여 줄 순서를 섞고 기록한다
-            order = candidate_ids(cand_dir)
-            random.SystemRandom().shuffle(order)
-            info["order"] = order
-            return order
-
-        def on_review(review: Review) -> None:
-            if review.winner is None or spec_path.exists():
-                return
-            spec_path.write_text(json.dumps(candidate_spec(cand_dir, review.winner), ensure_ascii=False, indent=2),
-                                 encoding="utf-8")
-            info["winner"] = review.winner
-            self._save()
-            print(f"  spec: 후보 {review.winner}를 spec.json으로 골랐다", flush=True)
-
-        await self._review_loop(stage, paths=[cand_dir, spec_path], generate=generate, check=self._spec_check,
-                                winners=winners, on_review=on_review)
+        # 이어 하기가 아니면 거르기에서 이 후보에 남은 지적부터 고친다
+        initial = None if info["rounds"] else verdict.feedback()
+        await self._review_loop(stage, paths=[spec_path], generate=generate, check=self._spec_check,
+                                initial_feedback=initial)
 
     def _researched(self, ids: list[str] | None) -> list[str]:
         """형식을 갖춘 조사 결과가 있는 후보 id. 조사를 끄고 이어 간 실행에서 없는 파일을 가리키지 않게 한다."""
@@ -533,7 +587,90 @@ class Pipeline:
                 self._save()
                 raise StageFailed(f"후보 {cid} 조사 결과가 형식 검사를 통과하지 못했다:\n{report}")
 
+    def _wants_design_directions(self) -> bool:
+        """사람에게 디자인 방향을 보여 줄 실행인가. 화면이 없는 앱이나 design off, 지정한 DESIGN.md는 아니다."""
+        return self.config.design == "auto" and candidates_have_screen(self.run_dir / "spec-candidates")
+
+    async def design_directions(self) -> None:
+        """사람이 고르기 전에 디자인 방향 3개를 만든다. 기능은 모든 spec 후보가 같으므로 spec을 고르기 전에 할 수 있다."""
+        if not self._wants_design_directions():
+            return
+        stage = STAGES["design"]
+        library = self.config.design_library
+        if library is None or not list_library(library):
+            raise StageFailed(f"디자인 라이브러리에 DESIGN.md가 없다: {library}")
+        picked = self.state.get("design")
+        if picked is None:
+            # --resume에서도 같은 후보를 쓰도록 seed와 후보를 state에 남긴다
+            seed = self.config.design_seed if self.config.design_seed is not None else random.SystemRandom().randrange(2**31)
+            picked = {"seed": seed, "candidates": pick_candidates(library, self.config.design_candidates, seed)}
+            self.state["design"] = picked
+            self._save()
+        concepts = self.run_dir / "concepts.json"
+        # 방향은 한 번만 만든다. 멈춘 뒤에 --resume하면 이미 있는 방향을 쓴다
+        if not check_directions(concepts, picked["candidates"]):
+            return
+        copy_candidates(library, picked["candidates"], self.run_dir)
+        print(f"\n== design 후보 (seed {picked['seed']}): {', '.join(picked['candidates'])}", flush=True)
+
+        def check() -> tuple[bool, str]:
+            return self._report(check_directions(concepts, picked["candidates"]), "Design 방향")
+
+        print("\n== design: 방향 3개 생성", flush=True)
+        await self._agent(
+            stage=f"{stage.name}-directions", round_no=1,
+            system_prompt=prompts.DIRECTIONS_SYSTEM + lessons_prompt(self.lessons_path, stage.name),
+            prompt=prompts.directions_prompt(self.config.idea, picked["candidates"], list_context(self.run_dir)),
+            tools=list(stage.gen_tools), writable=[concepts], max_turns=self.config.design_max_turns,
+            gate=StopGate(f"{stage.label} 방향", check, self.config.max_gate_blocks),
+        )
+        ok, report = check()
+        if not ok:
+            self._stage(stage.name).update(status="failed", last_check=report)
+            self._save()
+            raise StageFailed(f"design 방향이 자동 검사를 통과하지 못했다:\n{report}")
+
+    def choose(self) -> None:
+        """사람의 선택을 받는다. 고를 것이 남았는데 선택이 없으면 멈춘다.
+        구현 후보는 viable이 둘 이상일 때, 디자인 방향은 방향을 만든 실행일 때 고른다."""
+        info = self._stage("choice")
+        if info["status"] == "done":
+            return
+        choice = self.state.setdefault("choice", {})
+        screening = self._screening()
+        viable = screening.viable_ids
+        # 잘못된 id로 끝나도 다시 고를 수 있도록 먼저 대기 상태로 둔다
+        info["status"] = "awaiting_choice"
+        self._save()
+
+        if "spec" not in choice:
+            pick = self.config.choose_spec
+            if pick == "recommended":
+                choice["spec"] = {"id": screening.recommended, "by": "recommended", "reason": self.config.spec_reason}
+            elif pick is not None:
+                if pick not in viable:
+                    raise StageFailed(f"{pick!r}는 고를 수 있는 구현 후보가 아니다. viable: {', '.join(viable)}")
+                choice["spec"] = {"id": pick, "by": "human", "reason": self.config.spec_reason}
+            elif len(viable) == 1:
+                choice["spec"] = {"id": viable[0], "by": "only_viable", "reason": None}
+        if "design" not in choice and self._wants_design_directions() and self.config.choose_design is not None:
+            try:
+                chosen = choose_direction(self.run_dir / "concepts.json", self.config.choose_design, self.config.design_reason)
+            except ValueError as e:
+                raise StageFailed(str(e)) from e
+            choice["design"] = {"id": chosen["id"], "kind": chosen["kind"], "reason": self.config.design_reason}
+        self._save()
+
+        missing = [k for k in ("spec", "design") if k not in choice and (k == "spec" or self._wants_design_directions())]
+        if missing:
+            raise AwaitingChoice(f"사람이 고를 차례다: {', '.join(missing)}")
+        info["status"] = "done"
+        self._save()
+        print(f"\n== 선택: 구현 후보 {choice['spec']['id']} ({choice['spec']['by']})"
+              + (f", 디자인 방향 {choice['design']['id']}" if "design" in choice else ""), flush=True)
+
     async def design(self) -> None:
+        """고른 방향으로 DESIGN.md를 쓴다. design off나 화면 없는 앱은 건너뛰고, 지정한 파일은 그대로 쓴다."""
         stage = STAGES["design"]
         if self._done(stage.name, frozenset({"provided", "skipped"})):
             return
@@ -554,38 +691,8 @@ class Pipeline:
             print(f"\n== design: 지정한 DESIGN.md를 쓴다 ({mode})", flush=True)
             return
 
-        library = self.config.design_library
-        if library is None or not list_library(library):
-            raise StageFailed(f"디자인 라이브러리에 DESIGN.md가 없다: {library}")
-        picked = self.state.get("design")
-        if picked is None:
-            # --resume에서도 같은 후보를 쓰도록 seed와 후보를 state에 남긴다
-            seed = self.config.design_seed if self.config.design_seed is not None else random.SystemRandom().randrange(2**31)
-            picked = {"seed": seed, "candidates": pick_candidates(library, self.config.design_candidates, seed)}
-            self.state["design"] = picked
-            self._save()
-        copy_candidates(library, picked["candidates"], self.run_dir)
-        print(f"\n== design 후보 (seed {picked['seed']}): {', '.join(picked['candidates'])}", flush=True)
-
-        concepts = self.run_dir / "concepts.json"
-        # 방향은 한 번만 만든다. 멈춘 뒤나 고른 뒤에 --resume하면 이미 있는 방향을 쓴다
-        if info["status"] != "awaiting_choice" and picked.get("choice") is None:
-            await self._directions(stage, picked["candidates"])
-        if picked.get("choice") is None:
-            if self.config.choose is None:
-                info["status"] = "awaiting_choice"
-                self._save()
-                raise AwaitingChoice("디자인 방향을 사람이 고를 차례다")
-            try:
-                chosen = choose_direction(concepts, self.config.choose, self.config.choose_reason)
-            except ValueError as e:
-                raise StageFailed(str(e)) from e
-            picked["choice"] = {"id": self.config.choose, "kind": chosen["kind"], "reason": self.config.choose_reason}
-            info["status"] = "chosen"
-            self._save()
-            print(f"\n== design: 사람이 고른 방향 {chosen['id']} ({chosen['kind']})", flush=True)
-        chosen = next(d for d in directions_of(concepts) if str(d["id"]) == picked["choice"]["id"])
-
+        chosen_id = self.state["choice"]["design"]["id"]
+        chosen = next(d for d in directions_of(self.run_dir / "concepts.json") if str(d["id"]) == chosen_id)
         system = prompts.DESIGN_SYSTEM + lessons_prompt(self.lessons_path, stage.name)
         writable = [self.run_dir / "DESIGN.md"]
 
@@ -598,28 +705,6 @@ class Pipeline:
             )
 
         await self._review_loop(stage, paths=writable, generate=generate, check=self._design_check)
-
-    async def _directions(self, stage: Stage, candidates: list[str]) -> None:
-        """디자인 방향 3개를 concepts.json에 쓴다. 고르는 것은 사람이다."""
-        concepts = self.run_dir / "concepts.json"
-
-        def check() -> tuple[bool, str]:
-            problems = check_directions(concepts, candidates)
-            return (not problems), ("\n".join(f"- {p}" for p in problems) or "Design 방향 검사 통과")
-
-        print("\n== design: 방향 3개 생성", flush=True)
-        await self._agent(
-            stage=f"{stage.name}-directions", round_no=1,
-            system_prompt=prompts.DIRECTIONS_SYSTEM + lessons_prompt(self.lessons_path, stage.name),
-            prompt=prompts.directions_prompt(self.config.idea, candidates, list_context(self.run_dir)),
-            tools=list(stage.gen_tools), writable=[concepts], max_turns=self.config.design_max_turns,
-            gate=StopGate(f"{stage.label} 방향", check, self.config.max_gate_blocks),
-        )
-        ok, report = check()
-        if not ok:
-            self._stage(stage.name).update(status="failed", last_check=report)
-            self._save()
-            raise StageFailed(f"design 방향이 자동 검사를 통과하지 못했다:\n{report}")
 
     async def build(self) -> None:
         stage = STAGES["build"]
@@ -689,13 +774,14 @@ class Pipeline:
             "runs": self.state["runs"],
             "spec": spec.model_dump() if spec else None,
             "design": self.state.get("design"),
-            "spec_choice": self.state.get("spec"),
+            "choice": self.state.get("choice"),
         }
         report_path = self.run_dir / "run_report.json"
         report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
         readme = _readme(self.config.idea, spec, stages, self.spent, report["success"], error)
         if report["status"] == "awaiting_choice":
-            readme = _choice_readme(self.config.idea, self.run_dir, self.config.out_dir, self.spent, error)
+            readme = _choice_readme(self.config.idea, self.run_dir, self.config.out_dir, self.spent, error,
+                                    self._screening(), self.state.get("choice", {}), self._wants_design_directions())
         (self.run_dir / "README.md").write_text(readme, encoding="utf-8")
         return report_path
 
@@ -703,7 +789,10 @@ class Pipeline:
         error: str | None = None
         try:
             await self.prd()
-            await self.spec()
+            await self.screen_specs()
+            await self.design_directions()
+            self.choose()
+            await self.refine_spec()
             # Spec 루프가 최고점 라운드로 되돌린 뒤의 최종 spec.name을 쓴다. --resume에서 spec을 건너뛰어도 여기를 지난다
             self.rename_after_spec()
             await self.design()
@@ -750,14 +839,45 @@ def _readme(idea: str, spec: Spec | None, stages: dict[str, Any], cost: float, s
     return "\n".join(lines)
 
 
-def _choice_readme(idea: str, run_dir: Path, out_dir: Path, cost: float, error: str | None) -> str:
-    lines = ["# 디자인 방향 선택 대기", "", f"아이디어: {idea}", "", f"지금까지 비용 추정 ${cost:.2f}", ""]
+def _section(text: str, heading: str) -> str:
+    """마크다운에서 heading 절의 본문(다음 ## 제목 전까지)."""
+    if heading not in text:
+        return ""
+    return text.split(heading, 1)[1].split("\n## ", 1)[0].strip()
+
+
+def _choice_readme(
+    idea: str, run_dir: Path, out_dir: Path, cost: float, error: str | None,
+    screening: Screening, choice: dict[str, Any], wants_design: bool,
+) -> str:
+    lines = ["# 선택 대기", "", f"아이디어: {idea}", "", f"지금까지 비용 추정 ${cost:.2f}", ""]
     if error:
         lines += [f"직전 선택 오류: {error}", ""]
-    lines += ["방향 3개 중 하나를 골라 이어서 실행하라. 모델, effort, 예산은 처음 실행의 값을 이어 쓴다.",
-              "자세한 내용은 concepts.json과 design-candidates/ 참고.", ""]
-    for d in directions_of(run_dir / "concepts.json"):
-        lines += [f"## {d['id']} ({d['kind']}) - {', '.join(d['sources'])}", "", f"- 은유: {d['metaphor']}",
-                  f"- 첫 화면: {d['first_screen']}", f"- 위험: {d['risks']}", ""]
-    lines += ["```bash", f'uv run mvpgen --out {out_dir} --resume {run_dir.name} --choose <id> --reason "고른 이유"', "```", ""]
+    lines += ["구현 방식(구조)과 디자인 방향을 따로 골라 이어서 실행하라. 모델, effort, 예산은 처음 실행의 값을 이어 쓴다.", ""]
+    cmd = [f"uv run mvpgen --out {out_dir} --resume {run_dir.name}"]
+
+    if "spec" in choice:
+        lines += [f"## 구현 방식: {choice['spec']['id']}로 정해짐 ({choice['spec']['by']})", ""]
+    else:
+        lines += ["## 구현 방식 (spec-candidates/)", "", f"critic 판단: {screening.summary}", ""]
+        for v in screening.candidates:
+            cand = candidate(run_dir / "spec-candidates", v.id)
+            mark = "추천, " if v.id == screening.recommended else ""
+            lines += [f"### {v.id} ({mark}{'viable' if v.viable else '제외'}, {v.score}점)", "",
+                      f"- 결정: {cand['decision']}", f"- 선택: {cand['approach']}", f"- critic: {v.summary}"]
+            risks = _section((run_dir / RESEARCH_DIRNAME / f"{v.id}.md").read_text(encoding="utf-8"), "## 위험") \
+                if (run_dir / RESEARCH_DIRNAME / f"{v.id}.md").exists() else ""
+            if risks:
+                lines.append(f"- 조사로 본 위험: {risks}")
+            lines.append("")
+        cmd.append('--choose-spec <id> --spec-reason "고른 이유"')
+
+    if wants_design and "design" not in choice:
+        lines += ["## 디자인 방향 (concepts.json, 원천은 design-candidates/)", ""]
+        for d in directions_of(run_dir / "concepts.json"):
+            lines += [f"### {d['id']} ({d['kind']}) - {', '.join(d['sources'])}", "", f"- 은유: {d['metaphor']}",
+                      f"- 첫 화면: {d['first_screen']}", f"- 위험: {d['risks']}", ""]
+        cmd.append('--choose-design <id> --design-reason "고른 이유"')
+
+    lines += ["```bash", " \\\n  ".join(cmd), "```", ""]
     return "\n".join(lines)
