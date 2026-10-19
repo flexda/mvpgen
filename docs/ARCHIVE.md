@@ -355,8 +355,13 @@ A안의 결과로, 같은 프로젝트에서 두 번째 실행을 하면 첫 실
 | 작업 폴더 | `config.toml` 없이 `supabase/migrations`만 있어도 `db push`가 DB 접속 단계까지 간다 | 가짜 주소로 `--dry-run` 실행 |
 | 오류 출력 | 접속 실패 메시지에 호스트와 사용자 이름이 나오고 비밀번호는 나오지 않는다. 그래도 mvpgen은 가린다 | 같은 실행 |
 | 로컬 도구 | Supabase CLI는 `~/.local/bin/supabase`에 있고, Docker는 설치되어 있지만 데몬이 꺼져 있다. psql은 없다 | `which`, `docker info` |
+| 프로젝트 생성 | CLI가 이미 로그인되어 있어 `supabase projects create mvpdata-test --org-id ... --region ap-northeast-2`로 만들었다(ref `yjucvkpimbnsuicsudtd`). 비밀번호는 생성해 `secrets/`에만 저장했다 | 명령 결과 |
+| pooler 주소 | `supabase link`가 `supabase/.temp/pooler-url`에 남기는 주소는 6543(Transaction 모드)이다. 같은 호스트의 5432(Session 모드)로 접속했다 | 명령 결과, psycopg 접속 |
+| Session pooler의 `db push` | 동작한다 | smoke 실행 |
+| 적용 기록 버전 형식 | `schema_migrations.version`이 파일 이름의 14자리 시각과 같다. smoke에서 잠금이 1개 생겼다 | smoke 실행 |
+| 적재와 가리기 | 적재 2회 행 수가 같았고, 품질 SQL이 읽기 전용으로 돌았고, 근거 파일에 비밀값이 없었다. 정리 뒤 기록과 스키마가 비어 사전 점검을 다시 통과했다 | smoke 실행 |
 
-미확인: `schema_migrations.version`이 파일 이름의 14자리 시각과 같은 값인지(잠금이 이 가정을 쓴다), MMCA API 일일 호출 한도, Session pooler에서 `db push`가 동작하는지. 첫 실제 실행에서 확인한다.
+미확인: MMCA API 일일 호출 한도. 에이전트 실행은 아직 하지 않았다.
 
 ### 결정 과정
 
@@ -371,10 +376,9 @@ A안의 결과로, 같은 프로젝트에서 두 번째 실행을 하면 첫 실
 
 ### 사용자가 할 일
 
-1. supabase.com에서 새 프로젝트를 만든다.
-2. 대시보드 Connect > Session pooler 문자열을 main checkout의 `secrets/supabase.env`에 `SUPABASE_DB_URL=...`로 넣는다. 비밀번호의 특수문자는 퍼센트 인코딩한다.
-3. 첫 에이전트 실행 전에 `scripts/smoke_mvpdata.py`로 실제 DB 경로를 확인한다(확인받은 뒤).
-4. 실행은 확인받은 뒤 worktree에서 `uv run mvpdata ... --secrets /Users/reflectdata/Project/loop-2-test/secrets`로 한다(worktree에는 실제 secrets가 없다).
+1. 새 프로젝트와 `secrets/supabase.env`: 완료(사용자 확인 뒤 CLI로 만듦).
+2. smoke 확인: 완료, 전 단계 통과.
+3. 실행은 확인받은 뒤 worktree에서 `uv run mvpdata ... --secrets /Users/reflectdata/Project/loop-2-test/secrets`로 한다(worktree에는 실제 secrets가 없다).
 
 ## 커밋
 
