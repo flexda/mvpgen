@@ -79,7 +79,7 @@ async def run_agent(
     hooks: dict[str, list[HookMatcher]] = {
         "PreToolUse": [
             HookMatcher(
-                matcher="Bash|Write|Edit|MultiEdit|NotebookEdit|Read|Grep|Glob",
+                matcher="Bash|Write|Edit|MultiEdit|NotebookEdit|Read|Grep|Glob|WebFetch|WebSearch",
                 hooks=[make_guard(cwd, writable, protected, list((env or {}).values()))],
             )
         ],

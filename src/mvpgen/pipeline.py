@@ -20,6 +20,7 @@ from mvpgen.design import (check_design, check_directions, choose_direction, cop
                            pick_candidates)
 from mvpgen.gates import StopGate
 from mvpgen.lessons import lessons_prompt, record_lessons
+from mvpgen.research import RESEARCH_DIRNAME, check_research
 from mvpgen.rubrics import BUILD_RUBRIC, DESIGN_RUBRIC, PRD_RUBRIC, SPEC_RUBRIC
 from mvpgen.spec import Spec, candidate_ids, candidate_spec, check_prd, check_spec, check_spec_candidates, load_spec
 from mvpgen.verify import free_port, verify_app
@@ -46,6 +47,9 @@ STAGES: dict[str, Stage] = {s.name: s for s in (
           BUILD_RUBRIC, critic_port=True),
 )}
 
+# Spec 후보를 조사하는 세션의 도구. 쓰기는 자기 조사 파일 하나로 막고, 셸은 주지 않는다
+RESEARCH_TOOLS = ("Read", "Glob", "Grep", "Write", "WebSearch", "WebFetch")
+
 # 이 상태로 끝난 단계는 --resume에서 다시 돌리지 않는다
 DONE_STATUSES = frozenset({"passed", "passed_with_issues"})
 
@@ -66,7 +70,7 @@ class AwaitingChoice(RuntimeError):
 LEGACY_STAGE = {"prd": "plan", "spec": "plan"}
 
 # --stage-model에 쓸 수 있는 키. critic은 모든 critic에 적용되고, 개별 critic 키가 그보다 우선한다
-STAGE_MODEL_KEYS = (*STAGES, "plan", "critic", *(f"{s}-critic" for s in STAGES), "plan-critic")
+STAGE_MODEL_KEYS = (*STAGES, "plan", "research", "critic", *(f"{s}-critic" for s in STAGES), "plan-critic")
 
 
 def model_for(stage: str, stage_models: dict[str, str], default: str) -> str:
@@ -77,6 +81,9 @@ def model_for(stage: str, stage_models: dict[str, str], default: str) -> str:
         return (stage_models.get(stage) or (legacy and stage_models.get(f"{legacy}-critic"))
                 or stage_models.get("critic") or default)
     base = stage.split("-", 1)[0]
+    if base == "research":
+        # 조사 세션(research-a 등)은 따로 지정하지 않으면 spec 설정을 따른다
+        return stage_models.get("research") or model_for("spec", stage_models, default)
     return stage_models.get(base) or stage_models.get(LEGACY_STAGE.get(base, "")) or default
 
 
@@ -116,6 +123,9 @@ class RunConfig:
     plan_max_turns: int = 30  # prd와 spec 세션 각각
     # Spec 단계가 만들 구현 후보 수. critic이 그중 하나를 spec.json으로 고른다
     spec_candidates: int = 2
+    # 후보마다 조사 세션(웹 검색 포함)을 돌려 research/<id>.md를 남기고 spec critic이 근거로 쓴다
+    research: bool = True
+    research_max_turns: int = 40
     design_max_turns: int = 60
     build_max_turns: int = 150
     critic_max_turns: int = 60
@@ -136,7 +146,7 @@ class RunConfig:
 # 실행 설정 중 --resume에서 플래그를 생략하면 처음 실행의 값을 이어 쓰는 것과 그 기본값
 SETTING_DEFAULTS: dict[str, Any] = {
     "model": "claude-opus-5-5", "stage_models": {}, "effort": "high", "budget_usd": 10.0, "design": "auto",
-    "spec_candidates": 2,
+    "spec_candidates": 2, "research": True,
 }
 
 
@@ -197,7 +207,7 @@ class Pipeline:
         # --resume이 플래그를 생략했을 때 이어 쓸 값. 마지막 실행의 설정을 남긴다
         self.state["settings"] = {"model": config.model, "stage_models": config.stage_models, "effort": config.effort,
                                   "budget_usd": config.budget_usd, "design": config.design,
-                                  "spec_candidates": config.spec_candidates}
+                                  "spec_candidates": config.spec_candidates, "research": config.research}
 
     def _set_run_dir(self, run_dir: Path) -> None:
         # 모든 단계가 이 세 경로에서 파일 경로를 만든다. 폴더 이름을 바꾸면 여기서 한 번에 갱신한다
@@ -373,7 +383,7 @@ class Pipeline:
                 prompt=prompts.critic_prompt(stage, self.config.idea, spec.rubric, review_rel, port,
                                           has_context=bool(list_context(self.run_dir)),
                                           has_design=(self.run_dir / "DESIGN.md").exists(), has_brief=self._has_brief,
-                                          candidates=choices),
+                                          candidates=choices, researched=self._researched(choices)),
                 tools=list(spec.critic_tools),
                 writable=[review_path],
                 max_turns=self.config.critic_max_turns,
@@ -446,13 +456,17 @@ class Pipeline:
 
         async def generate(feedback: str | None, round_no: int) -> None:
             if not spec_path.exists():
-                await self._agent(
-                    stage=stage.name, round_no=round_no, system_prompt=prompts.SPEC_SYSTEM + env + lessons,
-                    prompt=prompts.spec_prompt(self.config.idea, self.config.spec_candidates, list_context(self.run_dir),
-                                               self._has_brief),
-                    tools=list(stage.gen_tools), writable=[cand_dir], max_turns=self.config.plan_max_turns,
-                    gate=self._gate(stage, self._spec_check),
-                )
+                # --resume에서 이미 검사를 통과한 후보가 있으면 다시 만들지 않는다
+                if not self._spec_check()[0]:
+                    await self._agent(
+                        stage=stage.name, round_no=round_no, system_prompt=prompts.SPEC_SYSTEM + env + lessons,
+                        prompt=prompts.spec_prompt(self.config.idea, self.config.spec_candidates,
+                                                   list_context(self.run_dir), self._has_brief),
+                        tools=list(stage.gen_tools), writable=[cand_dir], max_turns=self.config.plan_max_turns,
+                        gate=self._gate(stage, self._spec_check),
+                    )
+                if self.config.research and self._spec_check()[0]:
+                    await self._research(env)
                 return
             if feedback is None:
                 # --resume으로 고른 뒤에 다시 들어왔다. spec.json이 검사를 통과하면 평가만 다시 받고,
@@ -489,6 +503,35 @@ class Pipeline:
 
         await self._review_loop(stage, paths=[cand_dir, spec_path], generate=generate, check=self._spec_check,
                                 winners=winners, on_review=on_review)
+
+    def _researched(self, ids: list[str] | None) -> list[str]:
+        """형식을 갖춘 조사 결과가 있는 후보 id. 조사를 끄고 이어 간 실행에서 없는 파일을 가리키지 않게 한다."""
+        return [c for c in ids or [] if not check_research(self.run_dir / RESEARCH_DIRNAME / f"{c}.md")]
+
+    async def _research(self, env: str) -> None:
+        """후보마다 조사 세션을 돌려 research/<id>.md를 쓴다. 이미 형식을 갖춘 조사 결과는 다시 만들지 않는다."""
+        out_dir = self.run_dir / RESEARCH_DIRNAME
+        out_dir.mkdir(exist_ok=True)
+        for cid in candidate_ids(self.run_dir / "spec-candidates"):
+            path = out_dir / f"{cid}.md"
+            if not check_research(path):
+                continue
+
+            def check(path: Path = path) -> tuple[bool, str]:
+                return self._report(check_research(path), "조사")
+
+            print(f"\n== spec: 후보 {cid} 조사", flush=True)
+            await self._agent(
+                stage=f"research-{cid}", round_no=1, system_prompt=prompts.RESEARCH_SYSTEM + env,
+                prompt=prompts.research_prompt(self.config.idea, cid, list_context(self.run_dir), self._has_brief),
+                tools=list(RESEARCH_TOOLS), writable=[path], max_turns=self.config.research_max_turns,
+                gate=StopGate("조사", check, self.config.max_gate_blocks),
+            )
+            ok, report = check()
+            if not ok:
+                self._stage("spec").update(status="failed", last_check=report)
+                self._save()
+                raise StageFailed(f"후보 {cid} 조사 결과가 형식 검사를 통과하지 못했다:\n{report}")
 
     async def design(self) -> None:
         stage = STAGES["design"]

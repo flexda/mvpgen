@@ -54,3 +54,15 @@ def test_guard_hook_output_shape(tmp_path):
     allowed = asyncio.run(guard({"hook_event_name": "PreToolUse", "tool_name": "Read",
                                  "tool_input": {"file_path": "/etc/hosts"}}, None, None))
     assert allowed == {}
+
+
+async def test_web_tools_cannot_send_secret_values(tmp_path):
+    guard = make_guard(tmp_path, [tmp_path], secret_values=["sk-live-abcdef123456"])
+
+    async def decide(tool, tool_input):
+        out = await guard({"hook_event_name": "PreToolUse", "tool_name": tool, "tool_input": tool_input}, None, None)
+        return out.get("hookSpecificOutput", {}).get("permissionDecision")
+
+    assert await decide("WebFetch", {"url": "https://api.example.com/v1?key=sk-live-abcdef123456", "prompt": "x"}) == "deny"
+    assert await decide("WebSearch", {"query": "sk-live-abcdef123456 usage"}) == "deny"
+    assert await decide("WebFetch", {"url": "https://docs.example.com/api", "prompt": "엔드포인트"}) is None

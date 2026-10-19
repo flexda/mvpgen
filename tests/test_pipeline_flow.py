@@ -7,6 +7,7 @@ import mvpgen.pipeline as pipeline_mod
 from mvpgen.agents import AgentRun
 from mvpgen.pipeline import Pipeline, RunConfig
 from mvpgen.design import DESIGN_HEADINGS
+from mvpgen.research import RESEARCH_HEADINGS
 from mvpgen.spec import PRD_HEADINGS
 
 PY = sys.executable
@@ -56,6 +57,12 @@ def make_fake_agent(calls, fail_first=("prd-critic",)):
             for cid, approach in (("a", "MMCA API 실시간"), ("b", "수집 CSV")):
                 cand = {"decision": "데이터 출처", "approach": approach, "spec": {**fake_spec(), "summary": f"후보 {cid}"}}
                 (cwd / "spec-candidates" / f"{cid}.json").write_text(json.dumps(cand))
+            assert await gate({"hook_event_name": "Stop", "stop_hook_active": True}, None, None) == {}
+        elif stage.startswith("research-"):
+            cid = stage.removeprefix("research-")
+            first = await gate({"hook_event_name": "Stop", "stop_hook_active": False}, None, None)
+            assert first["decision"] == "block" and f"research/{cid}.md" in first["reason"]
+            (cwd / "research" / f"{cid}.md").write_text("\n\n".join(f"{h}\n" + "조사 " * 60 for h in RESEARCH_HEADINGS))
             assert await gate({"hook_event_name": "Stop", "stop_hook_active": True}, None, None) == {}
         elif stage == "spec":
             spec = json.loads((cwd / "spec.json").read_text())
@@ -108,12 +115,14 @@ async def test_full_flow_offline(tmp_path, monkeypatch):
     assert await Pipeline(config, run_dir).run() is True
 
     stages = [c[0] for c in calls]
-    assert stages == ["prd", "prd-critic", "prd", "prd-critic", "spec", "spec-critic", "build", "build-critic"]
+    assert stages == ["prd", "prd-critic", "prd", "prd-critic", "spec", "research-a", "research-b", "spec-critic", "build", "build-critic"]
     # 두 번째 prd 호출에는 critic 지적이 전달되어야 한다
     assert "범위가 넓다" in calls[2][1]
     # spec critic은 두 후보를 보고 하나를 골랐고, 그 후보가 spec.json이 되었다
-    critic_prompt = calls[5][1]
+    critic_prompt = calls[7][1]
     assert "spec-candidates/a.json" in critic_prompt and "spec-candidates/b.json" in critic_prompt and "winner" in critic_prompt
+    # 조사 결과가 후보 옆에 근거로 붙는다
+    assert "research/a.md" in critic_prompt and "research/b.md" in critic_prompt
     assert json.loads((run_dir / "spec.json").read_text())["summary"] == "후보 b"
 
     report = json.loads((run_dir / "run_report.json").read_text())
@@ -125,7 +134,7 @@ async def test_full_flow_offline(tmp_path, monkeypatch):
     assert report["stages"]["verify"]["status"] == "passed"
     build_run = next(r for r in report["runs"] if r["stage"] == "build")
     assert build_run["gate"]["blocks"] == 1
-    assert abs(report["cost_usd"] - 0.8) < 1e-9
+    assert abs(report["cost_usd"] - 1.0) < 1e-9
     assert "범위가 넓다" in (tmp_path / "lessons.md").read_text()
     readme = (run_dir / "README.md").read_text()
     assert "fake-todo" in readme and "export PORT=8000" in readme
@@ -269,7 +278,7 @@ async def test_design_auto_pauses_for_choice_then_resumes(tmp_path, monkeypatch)
     pipe = Pipeline(config, run_dir)
     assert await pipe.run() is False
     assert pipe.awaiting_choice
-    assert [c[0] for c in calls] == ["prd", "prd-critic", "prd", "prd-critic", "spec", "spec-critic", "design-directions"]
+    assert [c[0] for c in calls] == ["prd", "prd-critic", "prd", "prd-critic", "spec", "research-a", "research-b", "spec-critic", "design-directions"]
     report = json.loads((run_dir / "run_report.json").read_text())
     assert report["status"] == "awaiting_choice" and report["error"] is None
     assert report["design"]["seed"] == 7 and len(report["design"]["candidates"]) == 3
@@ -391,6 +400,7 @@ async def test_stage_models_reach_each_session(tmp_path, monkeypatch):
     assert await Pipeline(config, run_dir).run() is True
     # plan은 prd와 spec 양쪽에 쓰인다
     assert models == {"prd": {"plan-model"}, "prd-critic": {"critic-model"}, "spec": {"plan-model"},
+                      "research-a": {"plan-model"}, "research-b": {"plan-model"},
                       "spec-critic": {"critic-model"}, "build": {"default-model"}, "build-critic": {"bc-model"}}
     report = json.loads((run_dir / "run_report.json").read_text())
     assert report["stage_models"] == config.stage_models
@@ -413,15 +423,15 @@ async def test_spec_revision_edits_only_the_chosen_spec(tmp_path, monkeypatch):
     (run_dir / "brief.md").write_text("# 할 일 목록")
     assert await Pipeline(RunConfig(idea="할 일 목록", out_dir=tmp_path, budget_usd=5), run_dir).run() is True
 
-    assert [c[0] for c in calls][:6] == ["prd", "prd-critic", "spec", "spec-critic", "spec", "spec-critic"]
+    assert [c[0] for c in calls][:8] == ["prd", "prd-critic", "spec", "research-a", "research-b", "spec-critic", "spec", "spec-critic"]
     # 개정 세션도 고른 후보, 참고 자료, brief를 안다
     for needle in ("spec-candidates/b.json", "context/data.csv", "brief.md"):
-        assert needle in calls[4][1], needle
+        assert needle in calls[6][1], needle
     # 1라운드는 후보 폴더를, 2라운드는 고른 spec.json만 쓸 수 있다
     assert writables["spec"] == [["spec-candidates"], ["spec.json"]]
-    assert "범위가 넓다" in calls[4][1]
+    assert "범위가 넓다" in calls[6][1]
     # 2라운드 critic은 후보를 다시 고르지 않는다
-    assert "winner" not in calls[5][1] and "spec-candidates/a.json" not in calls[5][1]
+    assert "winner" not in calls[7][1] and "spec-candidates/a.json" not in calls[7][1]
     assert json.loads((run_dir / "spec.json").read_text())["summary"] == "후보 b (고침)"
     report = json.loads((run_dir / "run_report.json").read_text())
     assert [r.get("winner") for r in report["stages"]["spec"]["rounds"]] == ["b", None]
@@ -454,3 +464,74 @@ async def test_resume_repairs_broken_spec_json(tmp_path, monkeypatch):
     assert await Pipeline(RunConfig(idea="할 일 목록", out_dir=tmp_path, budget_usd=5), run_dir).run() is True
     assert calls[0][0] == "spec" and "intent가 없다" in calls[0][1]
     assert json.loads((run_dir / "spec.json").read_text())["intent"]
+
+
+async def test_resume_reuses_candidates_and_finished_research(tmp_path, monkeypatch):
+    """조사 중에 멈춘 실행을 이어 가면 후보는 다시 만들지 않고, 끝난 조사도 건너뛴다."""
+    calls = []
+    monkeypatch.setattr(pipeline_mod, "run_agent", make_fake_agent(calls, fail_first=()))
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "PRD.md").write_text("\n\n".join(f"{h}\n" + "내용 " * 40 for h in PRD_HEADINGS))
+    (run_dir / "spec-candidates").mkdir()
+    for cid, approach in (("a", "API"), ("b", "CSV")):
+        cand = {"decision": "데이터 출처", "approach": approach, "spec": {**fake_spec(), "summary": f"후보 {cid}"}}
+        (run_dir / "spec-candidates" / f"{cid}.json").write_text(json.dumps(cand))
+    (run_dir / "research").mkdir()
+    (run_dir / "research" / "a.md").write_text("\n\n".join(f"{h}\n" + "조사 " * 60 for h in RESEARCH_HEADINGS))
+    (run_dir / "state.json").write_text(json.dumps({
+        "idea": "할 일 목록", "stages": {"prd": {"status": "passed", "rounds": []}}, "runs": [], "cost_usd": 0.0}))
+
+    assert await Pipeline(RunConfig(idea="할 일 목록", out_dir=tmp_path, budget_usd=5), run_dir).run() is True
+    assert [c[0] for c in calls][:2] == ["research-b", "spec-critic"]
+
+
+async def test_no_research_skips_web_sessions(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(pipeline_mod, "run_agent", make_fake_agent(calls, fail_first=()))
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    config = RunConfig(idea="할 일 목록", out_dir=tmp_path, budget_usd=5, research=False)
+    assert await Pipeline(config, run_dir).run() is True
+    assert not any(s.startswith("research-") for s, _ in calls)
+    assert "research/" not in next(p for s, p in calls if s == "spec-critic")
+
+
+async def test_research_sessions_get_web_tools_and_one_writable_file(tmp_path, monkeypatch):
+    fake = make_fake_agent([], fail_first=())
+    seen = {}
+
+    async def recording(**kw):
+        if kw["stage"].startswith("research-"):
+            seen[kw["stage"]] = (kw["tools"], [p.relative_to(kw["cwd"]) for p in kw["writable"]])
+        return await fake(**kw)
+
+    monkeypatch.setattr(pipeline_mod, "run_agent", recording)
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    assert await Pipeline(RunConfig(idea="할 일 목록", out_dir=tmp_path, budget_usd=5), run_dir).run() is True
+    tools, writable = seen["research-a"]
+    assert {"WebSearch", "WebFetch"} <= set(tools) and "Bash" not in tools
+    assert [str(w) for w in writable] == ["research/a.md"]
+
+
+async def test_critic_only_points_at_existing_research(tmp_path, monkeypatch):
+    """조사 도중 멈춘 실행을 --no-research로 이어 가면, 조사가 끝난 후보에만 조사 파일을 붙인다."""
+    calls = []
+    monkeypatch.setattr(pipeline_mod, "run_agent", make_fake_agent(calls, fail_first=()))
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "PRD.md").write_text("\n\n".join(f"{h}\n" + "내용 " * 40 for h in PRD_HEADINGS))
+    (run_dir / "spec-candidates").mkdir()
+    for cid, approach in (("a", "API"), ("b", "CSV")):
+        cand = {"decision": "데이터 출처", "approach": approach, "spec": fake_spec()}
+        (run_dir / "spec-candidates" / f"{cid}.json").write_text(json.dumps(cand))
+    (run_dir / "research").mkdir()
+    (run_dir / "research" / "a.md").write_text("\n\n".join(f"{h}\n" + "조사 " * 60 for h in RESEARCH_HEADINGS))
+    (run_dir / "state.json").write_text(json.dumps({
+        "idea": "할 일 목록", "stages": {"prd": {"status": "passed", "rounds": []}}, "runs": [], "cost_usd": 0.0}))
+
+    config = RunConfig(idea="할 일 목록", out_dir=tmp_path, budget_usd=5, research=False)
+    assert await Pipeline(config, run_dir).run() is True
+    critic_prompt = next(p for s, p in calls if s == "spec-critic")
+    assert "research/a.md" in critic_prompt and "research/b.md" not in critic_prompt

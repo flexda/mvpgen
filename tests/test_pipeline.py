@@ -8,7 +8,7 @@ from mvpgen.pipeline import (STAGE_MODEL_KEYS, find_run_dir, make_slug, model_fo
 
 
 def test_stage_model_keys_follow_stage_table():
-    assert STAGE_MODEL_KEYS == ("prd", "spec", "design", "build", "plan", "critic",
+    assert STAGE_MODEL_KEYS == ("prd", "spec", "design", "build", "plan", "research", "critic",
                                 "prd-critic", "spec-critic", "design-critic", "build-critic", "plan-critic")
 
 
@@ -16,7 +16,9 @@ def test_resolve_settings_reads_legacy_state_and_defaults():
     legacy = {"model": "m0", "stage_models": {"plan": "p"}}
     got = resolve_settings({"model": None, "stage_models": {}, "effort": None, "budget_usd": None, "design": None}, legacy)
     assert got == {"model": "m0", "stage_models": {"plan": "p"}, "effort": "high", "budget_usd": 10.0, "design": "auto",
-                   "spec_candidates": 2}
+                   "spec_candidates": 2, "research": True}
+    # --no-research(False)는 생략(None)과 달리 저장값을 덮는다
+    assert resolve_settings({"research": False}, {"settings": {"research": True}})["research"] is False
     assert resolve_settings({"effort": "low"}, None)["effort"] == "low"
 
 
@@ -33,6 +35,8 @@ def test_model_for_resolution():
     legacy = {"plan": "p", "plan-critic": "pc", "critic": "c", "spec": "s"}
     assert [model_for(st, legacy, "d") for st in ("prd", "spec", "prd-critic", "spec-critic", "build-critic")] == [
         "p", "s", "pc", "pc", "c"]
+    assert model_for("research-a", legacy, "d") == "s"
+    assert model_for("research-b", {**legacy, "research": "r"}, "d") == "r"
 
 
 def test_parse_stage_models():

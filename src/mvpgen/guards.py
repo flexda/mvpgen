@@ -121,7 +121,7 @@ def make_guard(
     protected: list[Path] | None = None,
     secret_values: list[str] | None = None,
 ):
-    """root 밖 쓰기, writable 밖 쓰기, protected 폴더 접근, 비밀값 직접 기입을 막는 PreToolUse 콜백."""
+    """root 밖 쓰기, writable 밖 쓰기, protected 폴더 접근, 비밀값 직접 기입과 웹 도구로 비밀값 전송을 막는 PreToolUse 콜백."""
     protected = protected or []
     secrets = [v for v in (secret_values or []) if len(v) >= 8]
 
@@ -145,6 +145,9 @@ def make_guard(
             reason = check_write(str(target), root, writable) or check_secret_values(
                 json.dumps(tool_input, ensure_ascii=False), secrets
             )
+        elif tool in {"WebFetch", "WebSearch"}:
+            # URL과 검색어는 밖으로 나간다. 비밀값이 섞여 나가지 않게 막는다
+            reason = check_secret_values(json.dumps(tool_input, ensure_ascii=False), secrets)
         elif tool in {"Read", "Grep", "Glob"}:
             reason = check_protected(
                 [str(tool_input.get(k, "")) for k in ("file_path", "path", "pattern")], root, protected

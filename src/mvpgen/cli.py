@@ -26,7 +26,8 @@ def generate(
     model: Annotated[str | None, typer.Option(help="사용할 Claude 모델. 기본 claude-opus-5-5, --resume에서 생략하면 처음 값")] = None,
     stage_model: Annotated[list[str] | None, typer.Option(
         help="단계별 모델 STAGE=MODEL, 여러 번 지정 가능. STAGE: prd, spec, design, build, critic(모든 critic), "
-             "prd-critic, spec-critic, design-critic, build-critic. plan과 plan-critic은 prd와 spec 양쪽에 쓴다. "
+             "prd-critic, spec-critic, design-critic, build-critic, research(후보 조사, 기본은 spec 값). "
+             "plan과 plan-critic은 prd와 spec 양쪽에 쓴다. "
              "지정하지 않은 단계는 --model. --resume에서는 처음 값 위에 덮어쓴다"
     )] = None,
     effort: Annotated[str | None, typer.Option(help="low, medium, high, xhigh, max. 기본 high, --resume에서 생략하면 처음 값")] = None,
@@ -44,6 +45,9 @@ def generate(
     design_candidates: Annotated[int, typer.Option(help="design auto에서 무작위로 뽑을 후보 수")] = 8,
     design_seed: Annotated[int | None, typer.Option(help="후보 추출 seed. 비우면 무작위이며 state.json에 기록된다")] = None,
     spec_candidates: Annotated[int | None, typer.Option(min=1, max=4, help="Spec 단계가 만들 구현 후보 수. critic이 하나를 고른다. 기본 2, --resume에서 생략하면 처음 값")] = None,
+    research: Annotated[bool | None, typer.Option(
+        "--research/--no-research", help="Spec 후보마다 웹 검색으로 조사해 research/에 남긴다. 기본 켬, --resume에서 생략하면 처음 값"
+    )] = None,
     choose: Annotated[str | None, typer.Option(help="design auto가 방향 3개를 만들고 멈춘 실행에서 고를 방향 id. --resume과 함께 쓴다")] = None,
     reason: Annotated[str | None, typer.Option(help="--choose로 그 방향을 고른 이유. state.json과 concepts.json에 남아 실험 기록이 된다")] = None,
     gha_oidc: Annotated[bool, typer.Option(help="GitHub Actions에서 OIDC 토큰을 자동으로 받아 갱신")] = True,
@@ -94,10 +98,10 @@ def generate(
         state = None
     settings = resolve_settings(
         {"model": model, "stage_models": stage_models, "effort": effort, "budget_usd": budget, "design": design,
-         "spec_candidates": spec_candidates}, state)
+         "spec_candidates": spec_candidates, "research": research}, state)
     model, stage_models, effort, budget, design = (
         settings["model"], settings["stage_models"], settings["effort"], settings["budget_usd"], settings["design"])
-    spec_candidates = settings["spec_candidates"]
+    spec_candidates, research = settings["spec_candidates"], settings["research"]
 
     refresher = None
     if gha_oidc and GitHubOidcRefresher.available():
@@ -163,7 +167,7 @@ def generate(
         max_fix_rounds=max_fix_rounds, pass_threshold=pass_threshold,
         protected_paths=protected, mvp_env=mvp_env, lessons_path=lessons.resolve(),
         design=design, design_library=design_library.resolve(), design_candidates=design_candidates,
-        design_seed=design_seed, choose=choose, choose_reason=reason, spec_candidates=spec_candidates,
+        design_seed=design_seed, choose=choose, choose_reason=reason, spec_candidates=spec_candidates, research=research,
     )
     typer.echo(f"아이디어: {idea}\n폴더: {run_dir}\n모델: {model} (effort {effort}), 예산 ${budget:.2f}")
     if stage_models:
