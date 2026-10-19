@@ -71,3 +71,21 @@ def test_new_run_uses_defaults_and_failure_exits_1(tmp_path, monkeypatch):
     result, config = invoke(tmp_path, monkeypatch, "todo app", awaiting=False)
     assert result.exit_code == 1
     assert (config.model, config.effort, config.budget_usd, config.design) == ("claude-opus-5-5", "high", 10.0, "auto")
+
+
+def test_brief_alone_names_the_run_and_is_copied(tmp_path, monkeypatch):
+    brief = tmp_path / "brief.md"
+    brief.write_text("# todo list\n- 대상: 혼자 쓰는 사람")
+    result, config = invoke(tmp_path, monkeypatch, "--brief", str(brief), awaiting=False)
+    assert result.exit_code == 1, result.output
+    assert config.idea == "todo list"
+    [run_dir] = (tmp_path / "out").iterdir()
+    assert run_dir.name.endswith("-todo-list") and (run_dir / "brief.md").read_text() == brief.read_text()
+
+
+def test_brief_refused_on_resume(tmp_path, monkeypatch):
+    paused_run(tmp_path / "out")
+    brief = tmp_path / "brief.md"
+    brief.write_text("# x")
+    result, config = invoke(tmp_path, monkeypatch, "--resume", "run", "--brief", str(brief))
+    assert result.exit_code == 2 and config is None

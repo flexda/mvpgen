@@ -20,7 +20,8 @@ app = typer.Typer(add_completion=False, help="한 줄 아이디어로 실행 가
 
 @app.command()
 def generate(
-    idea: Annotated[str | None, typer.Argument(help="만들 MVP 아이디어 한 줄")] = None,
+    idea: Annotated[str | None, typer.Argument(help="만들 MVP 아이디어 한 줄. --brief만 주면 brief의 첫 줄을 쓴다")] = None,
+    brief: Annotated[Path | None, typer.Option(help="인터뷰로 정리한 요구 원문(brief.md). Plan과 critic이 아이디어 한 줄보다 우선해 읽는다")] = None,
     out: Annotated[Path, typer.Option(help="결과를 저장할 폴더")] = Path("workspace"),
     model: Annotated[str | None, typer.Option(help="사용할 Claude 모델. 기본 claude-opus-5-5, --resume에서 생략하면 처음 값")] = None,
     stage_model: Annotated[list[str] | None, typer.Option(
@@ -57,6 +58,8 @@ def generate(
 
     if (choose or reason) and not resume:
         raise typer.BadParameter("--choose와 --reason은 방향 선택을 기다리는 실행을 --resume할 때만 쓴다", param_hint="--choose")
+    if brief and resume:
+        raise typer.BadParameter("--brief는 새 실행에만 쓴다. 이어 하는 실행은 처음 brief.md를 그대로 쓴다", param_hint="--brief")
     if reason and not choose:
         raise typer.BadParameter("--reason은 --choose와 함께 쓴다", param_hint="--reason")
 
@@ -75,9 +78,16 @@ def generate(
         idea = idea or state["idea"]
         if choose and state.get("stages", {}).get("design", {}).get("status") != "awaiting_choice":
             raise typer.BadParameter(f"{run_dir.name}은 디자인 방향 선택을 기다리는 실행이 아니다", param_hint="--choose")
-    elif not idea:
-        raise typer.BadParameter("아이디어를 입력하거나 --resume을 지정하라", param_hint="IDEA")
+    elif not idea and not brief:
+        raise typer.BadParameter("아이디어나 --brief를 입력하거나 --resume을 지정하라", param_hint="IDEA")
     else:
+        if not idea:
+            from mvpgen.context import brief_title
+
+            assert brief is not None
+            idea = brief_title(brief.read_text(encoding="utf-8")) if brief.is_file() else ""
+            if not idea:
+                raise typer.BadParameter(f"{brief}가 없거나 비어 있다", param_hint="--brief")
         run_dir = out / make_slug(idea)
         state = None
     settings = resolve_settings(
@@ -127,6 +137,14 @@ def generate(
     elif design == "auto" and not design_library.is_dir():
         raise typer.BadParameter(f"{design_library} 폴더가 없다. scripts/sync_design_library.py로 받거나 --design off", param_hint="--design-library")
     run_dir.mkdir(parents=True, exist_ok=True)
+    if brief is not None:
+        from mvpgen.context import ContextError, copy_brief
+
+        try:
+            copy_brief(brief.expanduser().resolve(), run_dir, list(mvp_env.values()))
+        except ContextError as e:
+            raise typer.BadParameter(str(e), param_hint="--brief") from e
+        typer.echo(f"요구 원문: {brief}")
     if context is not None:
         from mvpgen.context import ContextError, copy_context
 

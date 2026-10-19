@@ -14,7 +14,7 @@ from typing import Any
 
 from mvpgen import prompts
 from mvpgen.agents import AgentRun, run_agent
-from mvpgen.context import list_context
+from mvpgen.context import BRIEF_NAME, list_context
 from mvpgen.critic import RoundTracker, Review, check_review_file, is_accepted, load_review
 from mvpgen.design import (check_design, check_directions, choose_direction, copy_candidates, directions_of, list_library,
                            pick_candidates)
@@ -241,6 +241,10 @@ class Pipeline:
         return StopGate(stage.label, check, self.config.max_gate_blocks)
 
     @property
+    def _has_brief(self) -> bool:
+        return (self.run_dir / BRIEF_NAME).is_file()
+
+    @property
     def awaiting_choice(self) -> bool:
         return self.state["stages"].get("design", {}).get("status") == "awaiting_choice"
 
@@ -341,7 +345,7 @@ class Pipeline:
                 system_prompt=prompts.CRITIC_SYSTEM,
                 prompt=prompts.critic_prompt(stage, self.config.idea, spec.rubric, review_rel, port,
                                           has_context=bool(list_context(self.run_dir)),
-                                          has_design=(self.run_dir / "DESIGN.md").exists()),
+                                          has_design=(self.run_dir / "DESIGN.md").exists(), has_brief=self._has_brief),
                 tools=list(spec.critic_tools),
                 writable=[review_path],
                 max_turns=self.config.critic_max_turns,
@@ -393,7 +397,7 @@ class Pipeline:
         async def generate(feedback: str | None, round_no: int) -> None:
             await self._agent(
                 stage=stage.name, round_no=round_no, system_prompt=system,
-                prompt=prompts.plan_prompt(self.config.idea, feedback, list_context(self.run_dir)),
+                prompt=prompts.plan_prompt(self.config.idea, feedback, list_context(self.run_dir), self._has_brief),
                 tools=list(stage.gen_tools), writable=writable, max_turns=self.config.plan_max_turns,
                 gate=self._gate(stage, self._plan_check),
             )
@@ -540,6 +544,7 @@ class Pipeline:
         verify_ok = stages.get("verify", {}).get("status") == "passed"
         report = {
             "idea": self.config.idea,
+            "brief": BRIEF_NAME if self._has_brief else None,
             "run_dir": self.run_dir.name,
             "renamed_from": self.state.get("renamed_from"),
             "success": verify_ok and error is None,

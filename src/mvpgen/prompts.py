@@ -171,8 +171,20 @@ def context_note(files: list[str], stage: str) -> str:
     return note
 
 
-def plan_prompt(idea: str, feedback: str | None, context_files: list[str] | None = None) -> str:
-    prompt = f"아이디어: {idea}\n\nPRD.md와 spec.json을 작성하라." + context_note(context_files or [], "plan")
+BRIEF_NOTE = (
+    "\n\n# 요구 원문 (brief.md)\n"
+    "사람과 인터뷰해 정리한 요구다. 아이디어 한 줄보다 brief.md가 우선한다. 읽기만 하고 고치지 않는다.\n"
+)
+
+
+def plan_prompt(idea: str, feedback: str | None, context_files: list[str] | None = None, has_brief: bool = False) -> str:
+    prompt = f"아이디어: {idea}\n\nPRD.md와 spec.json을 작성하라."
+    if has_brief:
+        prompt += BRIEF_NOTE + (
+            "작성 전에 끝까지 읽어라. 대상 사용자, 꼭 필요한 기능, 하지 않을 것, 제약을 PRD.md와 spec.json에 그대로 반영하고,"
+            " intent는 brief.md의 요구를 빠짐없이 나눠 적는다. brief.md가 하지 말라고 한 것을 기능에 넣지 않는다."
+        )
+    prompt += context_note(context_files or [], "plan")
     if feedback:
         prompt += (
             "\n\n이전 버전이 리뷰를 통과하지 못했다. 기존 파일을 읽고 아래 지적을 모두 반영해 두 파일을 고쳐라.\n\n"
@@ -251,7 +263,7 @@ def fix_prompt(report: str) -> str:
 
 def critic_prompt(
     stage: str, idea: str, rubric: str, review_path: str, port: int | None = None, has_context: bool = False,
-    has_design: bool = False,
+    has_design: bool = False, has_brief: bool = False,
 ) -> str:
     target = {
         "plan": "PRD.md와 spec.json",
@@ -261,6 +273,8 @@ def critic_prompt(
         f"원래 아이디어: {idea}\n\n평가 대상: {target}\n\n루브릭:\n{rubric}\n"
         f"평가 결과를 {review_path}에 작성하라."
     )
+    if has_brief:
+        prompt += BRIEF_NOTE + "원래 아이디어 대신 brief.md를 요구 원문으로 삼아 평가하라. 루브릭의 '아이디어 원문'은 brief.md를 뜻한다."
     if stage == "build" and has_design:
         prompt += (
             "\n\n작업 폴더의 DESIGN.md가 이 앱의 디자인 시스템이다. app/의 CSS와 템플릿이 그 토큰과 레이아웃을 따르는지,"

@@ -158,6 +158,28 @@ async def test_fallback_folder_renamed_after_plan(tmp_path, monkeypatch):
     assert pipeline_mod.find_run_dir(tmp_path, "20261012-153000-mvp") == new_dir
 
 
+async def test_brief_reaches_plan_and_critics(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(pipeline_mod, "run_agent", make_fake_agent(calls))
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "brief.md").write_text("# 할 일 목록\n- 하지 않을 것: 로그인")
+
+    assert await Pipeline(RunConfig(idea="할 일 목록", out_dir=tmp_path, budget_usd=5), run_dir).run() is True
+    for stage in ("plan", "plan-critic", "build-critic"):
+        assert "# 요구 원문 (brief.md)" in next(p for s, p in calls if s == stage), stage
+    assert json.loads((run_dir / "run_report.json").read_text())["brief"] == "brief.md"
+
+
+async def test_no_brief_keeps_idea_only_prompts(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(pipeline_mod, "run_agent", make_fake_agent(calls))
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    assert await Pipeline(RunConfig(idea="할 일 목록", out_dir=tmp_path, budget_usd=5), run_dir).run() is True
+    assert not any("brief.md" in p for _, p in calls)
+
+
 async def test_context_reaches_plan_build_and_critic_after_rename(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setattr(pipeline_mod, "run_agent", make_fake_agent(calls))
