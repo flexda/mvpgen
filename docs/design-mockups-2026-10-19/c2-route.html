@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>C2 시간 동선</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
+<link rel="stylesheet" href="stedelijk.css">
+</head>
+<body>
+<header class="bar">
+  <nav><span>전시</span><span>갤러리</span></nav>
+  <span class="cta">10월 18일 일요일</span>
+</header>
+<section class="mast">
+  <h1>오늘 뭐하지</h1>
+  <p class="sub">서울 갤러리 현재 전시 11</p>
+  <span class="sticker">오늘 4개 마감!</span>
+</section>
+<hr class="rule">
+<p class="q">오늘 얼마나 시간 있어요?</p>
+<div class="opts" role="group" aria-label="쓸 수 있는 시간">
+  <button type="button" data-min="120">2시간</button>
+  <button type="button" data-min="240" aria-pressed="true">반나절</button>
+  <button type="button" data-min="480">하루</button>
+</div>
+<div class="band"><span><b>시안용 가정:</b> 동네와 관람 시간은 확인하지 않은 값</span><span id="rule"></span></div>
+<div class="band big" id="sum"></div>
+<section id="route"></section>
+<details class="cmp">
+  <summary>기준선 추천과 무엇이 다른가</summary>
+  <ul>
+    <li>기준선 Top 3: 국제갤러리 · 갤러리현대 · 화이트큐브 서울. 삼청에서 도산까지 이동해야 한다.</li>
+    <li>기준선은 갤러리당 1개만 고른다. 그래서 같은 국제갤러리 K2의 「Pictos and Pitwall」(오늘 종료)이 빠졌다.</li>
+    <li>이 방식은 한 동네 안에서 오늘 닫는 전시를 먼저 묶는다.</li>
+  </ul>
+</details>
+<p class="q">이번 동선에 없는 전시</p>
+<hr class="rule">
+<section id="rest"></section>
+<footer>
+  <span>갤러리 정보 기준일 <b>2026-10-06</b></span>
+  <span>국립현대미술관 · 마지막 동기화 기록 없음</span>
+  <button type="button">MMCA 동기화</button>
+</footer>
+<script src="data.js"></script>
+<script>
+  const MOVE_IN_AREA = 10, MOVE_BETWEEN = 40;
+  const urgency = (x) => (x.days === 0 ? 3 : x.days <= 7 ? 2 : 1);
+  const areas = {};
+  EXHIBITIONS.filter((x) => x.area !== "위치 미확인").forEach((x) => (areas[x.area] ||= []).push(x));
+  const rankedAreas = Object.entries(areas)
+    .map(([name, xs]) => ({ name, xs: xs.slice().sort((a, b) => a.days - b.days || a.gallery.localeCompare(b.gallery)), u: xs.reduce((s, x) => s + urgency(x), 0) }))
+    .sort((a, b) => b.u - a.u);
+
+  function plan(budget) {
+    const legs = [];
+    let used = 0;
+    for (const [ai, area] of rankedAreas.entries()) {
+      if (ai > 0) { if (used + MOVE_BETWEEN > budget) break; used += MOVE_BETWEEN; }
+      const leg = { name: area.name, move: ai > 0, xs: [] };
+      for (const x of area.xs) {
+        const cost = x.minutes + MOVE_IN_AREA;
+        if (used + cost > budget) continue;
+        used += cost; leg.xs.push(x);
+      }
+      if (leg.xs.length) legs.push(leg);
+    }
+    return { legs, used };
+  }
+
+  const meta = (x) => '<div class="m">' + esc(x.artists) + " <span>· " + esc(place(x)) + " · " + period(x) + "</span></div>";
+  function render(budget) {
+    const { legs, used } = plan(budget);
+    const picked = legs.flatMap((l) => l.xs);
+    document.getElementById("rule").textContent = "오늘 닫는 전시가 많은 동네부터";
+    document.getElementById("sum").textContent = picked.length + "곳 · 약 " + Math.round(used / 30) / 2 + "시간 · 오늘 닫는 전시 " + picked.filter((x) => x.days === 0).length + "곳";
+    let n = 0;
+    document.getElementById("route").innerHTML = legs.map((l) =>
+      (l.move ? '<div class="move">↓ 이동 약 ' + MOVE_BETWEEN + "분</div>" : "") +
+      '<div class="band big">' + l.name + "</div>" + l.xs.map((x) => {
+        n += 1;
+        return '<a class="x small" href="#/exhibitions/' + x.id + '"><span class="when num">' + n + "<small>약 " + x.minutes + "분</small></span>" +
+          '<div><div class="t">' + esc(x.title) + "</div>" + meta(x) + badges(x).map((b) => '<span class="badge">' + b + "</span>").join("") + "</div>" +
+          '<span class="d' + (x.days === 0 ? " today" : "") + '">' + dLabel(x.days) + "</span></a>";
+      }).join("")).join("");
+    const ids = new Set(picked.map((x) => x.id));
+    document.getElementById("rest").innerHTML = EXHIBITIONS.filter((x) => !ids.has(x.id)).sort((a, b) => a.days - b.days).map((x) =>
+      '<a class="x small" href="#/exhibitions/' + x.id + '"><span class="when">' + esc(x.area) + "</span>" +
+      '<div><div class="t">' + esc(x.title) + "</div>" + meta(x) + "</div>" +
+      '<span class="d">' + dLabel(x.days) + "</span></a>").join("");
+  }
+  document.querySelectorAll(".opts button").forEach((b) => b.addEventListener("click", () => {
+    document.querySelectorAll(".opts button").forEach((o) => o.setAttribute("aria-pressed", o === b));
+    render(+b.dataset.min);
+  }));
+  render(240);
+</script>
+</body>
+</html>

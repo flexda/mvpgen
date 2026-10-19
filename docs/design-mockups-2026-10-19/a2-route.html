@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A2 New Museum 시간 동선</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@125,800;125,900&family=Black+Han+Sans&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="newmuseum.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="bar">
+    <span class="mark">오늘 뭐하지</span>
+    <nav class="nav"><span class="hide">전시</span><span class="hide">갤러리</span><span class="pill">10.18 SUN</span></nav>
+  </header>
+  <section class="hero">
+    <p class="big q">시간<br>얼마나?</p>
+    <div class="seg" id="seg"></div>
+    <div class="tools"><span class="assume">시안용 가정: 동네와 관람 시간은 확인하지 않은 값</span><span>오늘 닫는 전시가 많은 동네부터</span></div>
+  </section>
+  <p class="sum" id="sum"></p>
+  <div id="route"></div>
+  <details class="cmp">
+    <summary>기준선 추천과 무엇이 다른가</summary>
+    <ul>
+      <li>기준선 Top 3: 국제갤러리 · 갤러리현대 · 화이트큐브 서울. 삼청에서 도산까지 이동해야 한다.</li>
+      <li>기준선은 갤러리당 1개만 고른다. 그래서 같은 국제갤러리 K2의 「Pictos and Pitwall」(오늘 종료)이 빠졌다.</li>
+      <li>이 방식은 한 동네 안에서 오늘 닫는 전시를 먼저 묶는다.</li>
+    </ul>
+  </details>
+  <h2>이번 동선에 없는 전시</h2>
+  <div class="rows" id="rest"></div>
+  <footer>
+    <span>갤러리 정보 기준일 <b>2026-10-06</b></span>
+    <span>국립현대미술관 · 마지막 동기화 기록 없음</span>
+    <button type="button">MMCA 동기화</button>
+  </footer>
+</div>
+<script src="data.js"></script>
+<script src="logic.js"></script>
+<script>
+  const chipsFor = (x) => badges(x).length ? '<span class="chips">' + badges(x).map((b) => '<span class="chip blue">' + b + "</span>").join("") + "</span>" : "";
+  const dA = (x) => '<span class="d' + (x.days === 0 ? " today" : "") + '">' + dLabel(x.days) + "</span>";
+  const rowA = (x) => '<a class="r" href="#/exhibitions/' + x.id + '"><span class="t">' + esc(x.title) + "</span>" + dA(x) +
+    '<span class="m">' + esc(x.artists) + " · " + esc(place(x)) + " · " + period(x) + "</span>" + chipsFor(x) + "</a>";
+  const seg = document.getElementById("seg");
+  seg.innerHTML = BUDGETS.map((b) => '<button type="button" data-v="' + b.min + '" aria-pressed="' + (b.min === 240) + '">' + b.label + "</button>").join("");
+  function render(budget) {
+    const p = planRoute(budget);
+    document.getElementById("sum").innerHTML = p.picked.length + "곳 · 약 " + p.hours + "시간<small>오늘 닫는 전시 " + p.closing + "곳 포함</small>";
+    let n = 0;
+    document.getElementById("route").innerHTML = p.legs.map((l) =>
+      (l.move ? '<div class="move">↓ 이동 약 ' + MOVE_BETWEEN + "분</div>" : "") +
+      '<section class="group"><h3 class="ko">' + l.name + '</h3><div class="rows">' + l.xs.map((x) => {
+        n += 1;
+        return '<a class="r num" href="#/exhibitions/' + x.id + '"><span class="no">' + n + "<small>약 " + x.minutes + '분</small></span><span class="t">' + esc(x.title) + "</span>" + dA(x) +
+          '<span class="m">' + esc(x.artists) + " · " + esc(place(x)) + " · " + period(x) + "</span>" + chipsFor(x) + "</a>";
+      }).join("") + "</div></section>").join("");
+    document.getElementById("rest").innerHTML = p.rest.map((x) =>
+      '<a class="r" href="#/exhibitions/' + x.id + '"><span class="t">' + esc(x.title) + "</span>" + dA(x) + '<span class="m">' + esc(x.area) + " · " + esc(place(x)) + "</span></a>").join("");
+  }
+  bindSeg(seg, (v) => render(+v));
+  render(240);
+</script>
+</body>
+</html>

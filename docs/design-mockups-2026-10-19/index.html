@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>디자인 시안 비교</title>
+<style>
+  :root { --bg: #fafaf8; --ink: #1a1a1a; --ink-2: #555; --line: #ddd; --card: #fff; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: "Apple SD Gothic Neo", "Pretendard", system-ui, sans-serif; line-height: 1.6; word-break: keep-all; overflow-wrap: anywhere; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 24px; margin: 0 0 4px; }
+  .lead { color: var(--ink-2); margin: 0 0 24px; font-size: 15px; }
+  h2 { font-size: 18px; margin: 32px 0 10px; }
+  .base { display: grid; gap: 12px; grid-template-columns: 1fr; }
+  @media (min-width: 760px) { .base { grid-template-columns: 3fr 1fr; align-items: start; } }
+  img { width: 100%; border: 1px solid var(--line); display: block; }
+  .cards { display: grid; gap: 16px; grid-template-columns: 1fr; }
+  @media (min-width: 860px) { .cards { grid-template-columns: 1fr 1fr 1fr; } }
+  .card { background: var(--card); border: 1px solid var(--line); padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+  .card h3 { margin: 0; font-size: 17px; }
+  .card a.open { font-weight: 700; color: var(--ink); }
+  .sw { display: flex; gap: 4px; }
+  .sw span { width: 28px; height: 28px; border: 1px solid var(--line); }
+  dl { margin: 0; font-size: 14px; display: grid; grid-template-columns: 4.5em 1fr; gap: 4px 8px; }
+  dt { color: var(--ink-2); }
+  dd { margin: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; background: var(--card); }
+  th, td { border: 1px solid var(--line); padding: 8px 10px; text-align: left; vertical-align: top; }
+  th { background: #f0f0ec; }
+  .scroll { overflow-x: auto; }
+  .mx td a { display: inline-block; font-weight: 800; font-size: 18px; color: var(--ink); padding: 6px 4px; }
+  .note { font-size: 13px; color: var(--ink-2); }
+</style>
+</head>
+<body>
+<main class="wrap">
+  <h1>오늘 뭐하지: 디자인 시안 3개 (전시 기관 참조)</h1>
+  <p class="lead">기준일 2026-10-18, 데이터는 기준선 앱(run 39119897521)의 /api/today 결과 그대로(진행 중 11건). 참조는 미술관 사이트 12곳의 홈 HTML과 CSS를 받아 색과 글꼴 빈도를 세고 화면을 캡처한 뒤, 서로 가장 다른 셋을 골랐습니다.</p>
+
+  <h2>기준선: 안 맞았던 것 (bmw-m 레이싱 타이밍 타워)</h2>
+  <div class="base">
+    <img src="baseline-desk.png" alt="기준선 데스크톱 첫 화면">
+    <img src="baseline-m360.png" alt="기준선 360px 화면">
+  </div>
+
+  <h2>1단계: 디자인 비교 (C 선택)</h2>
+  <div class="cards">
+    <div class="card">
+      <h3>A. New Museum 참조</h3>
+      <a class="note" href="https://www.newmuseum.org/">참조 사이트: https://www.newmuseum.org/</a>
+      <div class="sw"><span style="background:#000"></span><span style="background:#beff00"></span><span style="background:#00b2ff"></span><span style="background:#fff"></span></div>
+      <dl>
+        <dt>빌린 것</dt><dd>검정 바탕, 애시드 라임 거대 글자, 와이드 그로테스크, 라임 테두리 버튼</dd>
+        <dt>고르기</dt><dd>기준선 Top 3 그대로 + 오늘/이번 주/더 오래 묶음</dd>
+      </dl>
+      <a class="open" href="a1-top3.html">열기</a>
+    </div>
+    <div class="card">
+      <h3>B. Barbican 참조</h3>
+      <a class="note" href="https://www.barbican.org.uk/">참조 사이트: https://www.barbican.org.uk/</a>
+      <div class="sw"><span style="background:#d14900"></span><span style="background:#fff"></span><span style="background:#f2f2f2"></span><span style="background:#1a1a1a"></span></div>
+      <dl>
+        <dt>빌린 것</dt><dd>주황 전면 헤더, 흰 굵은 산세리프, 둥근 6px 버튼, 짙은 푸터</dd>
+        <dt>고르기</dt><dd>쓸 수 있는 시간을 고르면 한 동네 동선(입장권 묶음)</dd>
+      </dl>
+      <a class="open" href="b2-route.html">열기</a>
+      <p class="note">동네와 관람 시간은 시안용 가정입니다.</p>
+    </div>
+    <div class="card">
+      <h3>C. Stedelijk 참조</h3>
+      <a class="note" href="https://www.stedelijk.nl/en">참조 사이트: https://www.stedelijk.nl/en</a>
+      <div class="sw"><span style="background:#fff"></span><span style="background:#0a0a0a"></span><span style="background:#22ff06"></span><span style="background:#ffd511"></span></div>
+      <dl>
+        <dt>빌린 것</dt><dd>거대한 얇은 글자, 5px 검정 괘선 행, 형광 초록 선택, 기울어진 노랑 스티커</dd>
+        <dt>고르기</dt><dd>질문 하나: 오늘 아니면 못 봄 / 이번 주 / 급하지 않음 / 전부</dd>
+      </dl>
+      <a class="open" href="c3-question.html">열기</a>
+    </div>
+  </div>
+
+  <h2>고르는 방식 3가지</h2>
+  <div class="cards">
+    <div class="card"><h3>1. 추천 Top 3</h3><dl><dt>사용자</dt><dd>할 일 없음</dd><dt>규칙</dt><dd>기준선 F4 점수 상위 3개, 갤러리당 1개. 아래에 오늘/이번 주/더 오래 묶음</dd><dt>바꿀 곳</dt><dd>Design만</dd></dl></div>
+    <div class="card"><h3>2. 시간 동선</h3><dl><dt>사용자</dt><dd>2시간/반나절/하루 선택</dd><dt>규칙</dt><dd>오늘 닫는 전시가 많은 동네부터, 시간 안에 들어가는 만큼. 같은 갤러리도 포함</dd><dt>바꿀 곳</dt><dd>Design + Plan F4 + 데이터(동네, 관람 시간)</dd></dl><p class="note">동네와 관람 시간은 시안용 가정입니다.</p></div>
+    <div class="card"><h3>3. 질문형</h3><dl><dt>사용자</dt><dd>오늘 아니면 못 봄 / 이번 주 / 급하지 않음 / 전부</dd><dt>규칙</dt><dd>점수 없이 남은 날로 나눔. 정보 확인된 것만 거르기</dd><dt>바꿀 곳</dt><dd>Design + Plan F4</dd></dl></div>
+  </div>
+
+  <h2>디자인 3 × 고르는 방식 3 = 9개</h2>
+  <div class="scroll">
+  <table class="mx">
+    <tr><th>디자인 \ 방식</th><th>1. 추천 Top 3</th><th>2. 시간 동선</th><th>3. 질문형</th></tr>
+    <tr><th>A New Museum</th><td><a href="a1-top3.html">A1</a></td><td><a href="a2-route.html">A2</a></td><td><a href="a3-question.html">A3</a></td></tr>
+    <tr><th>B Barbican</th><td><a href="b1-top3.html">B1</a></td><td><a href="b2-route.html">B2</a></td><td><a href="b3-question.html">B3</a></td></tr>
+    <tr><th>C Stedelijk</th><td><a href="c1-top3.html">C1</a></td><td><a href="c2-route.html">C2</a></td><td><a href="c3-question.html">C3</a></td></tr>
+  </table>
+  </div>
+  <p class="note">고르는 규칙은 logic.js 하나를 A, B가 함께 쓴다(C는 같은 규칙을 페이지 안에 둠). 디자인별로 다른 것은 화면 구성뿐이다.</p>
+
+  <h2>참조 후보 12곳 실측 요약</h2>
+  <div class="scroll">
+  <table>
+    <tr><th>사이트</th><th>많이 쓰인 색 (CSS 빈도)</th><th>글꼴</th><th>판단</th></tr>
+    <tr><td>New Museum</td><td>#000 #fff #00b2ff #beff00</td><td>Akkurat, Neographik</td><td>채택 A</td></tr>
+    <tr><td>Barbican</td><td>#333 #d14900 #fff #5778a2</td><td>Supreme Black</td><td>채택 B</td></tr>
+    <tr><td>Stedelijk</td><td>#fff #0a0a0a #ebeae8 #d62348, 화면에 #22ff06 #ffd511</td><td>Union</td><td>채택 C</td></tr>
+    <tr><td>Whitney</td><td>#000 #ccc #fff #d7ff2d</td><td>Neue Haas Grotesk</td><td>Stedelijk와 겹침(흰 바탕 흑백)</td></tr>
+    <tr><td>ICA</td><td>#fff #000 #ffff00 #ff0000 #0000ff</td><td>OCR-B, Computer Modern</td><td>후보. 원색과 타자기 글꼴</td></tr>
+    <tr><td>Palais de Tokyo</td><td>#fff #000 #fff8a5</td><td>Silka, Gaffer(스텐실)</td><td>후보. A와 겹침(검정)</td></tr>
+    <tr><td>Kunsthalle Basel</td><td>#333 #1199ff #fff</td><td>Suisse, KB Rhymes</td><td>사진 중심이라 이미지 없는 앱에 약함</td></tr>
+    <tr><td>MoMA</td><td>#000 #fff #999</td><td>MoMA Sans</td><td>흑백 위주</td></tr>
+    <tr><td>Serpentine, Walker, 아트선재, 리움</td><td>워드프레스 기본색이거나 추출 실패</td><td>-</td><td>판단 보류</td></tr>
+  </table>
+  </div>
+
+  <h2>이 방향을 고르면 mvpgen에서 바꿀 곳</h2>
+  <div class="scroll">
+  <table>
+    <tr><th>바꿀 곳</th><th>내용</th></tr>
+    <tr><td>design-library</td><td>지금 86개는 모두 일반 브랜드(자동차, SaaS 등). 전시 기관 DESIGN.md를 추가하거나, 분야에 맞는 후보를 뽑는 규칙 필요</td></tr>
+    <tr><td>Design 프롬프트</td><td>"분야가 다른 후보" 규칙이 레이싱 결과를 만든 원인. 같은 분야 안의 낯선 표현을 허용하도록 수정</td></tr>
+    <tr><td>Plan(spec F4)</td><td>B, C의 고르는 방식은 Design이 아니라 Plan에서 정해야 함</td></tr>
+  </table>
+  </div>
+  <p class="note">글꼴은 대체품입니다: Neographik 대신 Archivo(와이드) + Black Han Sans, Supreme 대신 Pretendard/Outfit, Union 대신 Helvetica Neue/Pretendard. 웹 글꼴은 CDN에서 불러오므로 실제 앱에서는 앱에 넣어야 합니다. 상세 화면 링크는 동작하지 않습니다.</p>
+</main>
+</body>
+</html>
