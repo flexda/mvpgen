@@ -17,7 +17,7 @@ from mvpgen.agents import AgentRun, run_agent
 from mvpgen.context import BRIEF_NAME, list_context
 from mvpgen.critic import RoundTracker, Review, Screening, check_review_file, check_screening_file, is_accepted, load_review, load_screening
 from mvpgen.design import (PREVIEWS_DIRNAME, check_design, check_design_md, check_directions, check_previews, choose_direction,
-                           copy_candidates, directions_of, list_library, pick_candidates)
+                           copy_candidates, directions_of, list_library, write_index)
 from mvpgen.gates import StopGate
 from mvpgen.lessons import lessons_prompt, record_lessons
 from mvpgen.research import RESEARCH_DIRNAME, check_research
@@ -141,8 +141,6 @@ class RunConfig:
     # off: Design 단계 없음, auto: 라이브러리에서 무작위 후보를 뽑아 Design 에이전트가 방향을 정함, 그 밖: 그대로 쓸 DESIGN.md 경로
     design: str = "off"
     design_library: Path | None = None
-    design_candidates: int = 8
-    design_seed: int | None = None
     # 사람이 고른 구현 후보(spec)와 디자인 방향, 각각의 이유. 고를 차례에 멈춘 실행을 --resume으로 이어 갈 때 준다.
     # choose_spec="recommended"는 critic의 추천을 그대로 쓴다(멈추지 않는 실행용)
     choose_spec: str | None = None
@@ -604,13 +602,9 @@ class Pipeline:
         library = self.config.design_library
         if library is None or not list_library(library):
             raise StageFailed(f"디자인 라이브러리에 DESIGN.md가 없다: {library}")
-        picked = self.state.get("design")
-        if picked is None:
-            # --resume에서도 같은 후보를 쓰도록 seed와 후보를 state에 남긴다
-            seed = self.config.design_seed if self.config.design_seed is not None else random.SystemRandom().randrange(2**31)
-            picked = {"seed": seed, "candidates": pick_candidates(library, self.config.design_candidates, seed)}
-            self.state["design"] = picked
-            self._save()
+        # 무작위로 뽑지 않는다. 라이브러리 전체와 목록을 두고 에이전트가 분야에 어울리는 원천을 고른다(concepts.json의 sources)
+        picked = self.state.setdefault("design", {"library": str(library), "candidates": list_library(library)})
+        self._save()
         concepts = self.run_dir / "concepts.json"
         cand_dir = self.run_dir / "spec-candidates"
         # 기능은 모든 spec 후보가 같다(check_spec_candidates)
@@ -626,13 +620,14 @@ class Pipeline:
         if check()[0]:
             return
         copy_candidates(library, picked["candidates"], self.run_dir)
-        print(f"\n== design 후보 (seed {picked['seed']}): {', '.join(picked['candidates'])}", flush=True)
+        write_index(library, picked["candidates"], self.run_dir)
+        print(f"\n== design 원천: {library}의 {len(picked['candidates'])}개 중에서 고른다", flush=True)
 
         print("\n== design: 방향 3개 생성", flush=True)
         await self._agent(
             stage=f"{stage.name}-directions", round_no=1,
             system_prompt=prompts.DIRECTIONS_SYSTEM + lessons_prompt(self.lessons_path, stage.name),
-            prompt=prompts.directions_prompt(self.config.idea, picked["candidates"], feature_ids, list_context(self.run_dir)),
+            prompt=prompts.directions_prompt(self.config.idea, feature_ids, list_context(self.run_dir)),
             tools=list(stage.gen_tools), writable=[concepts, self.run_dir / PREVIEWS_DIRNAME],
             max_turns=self.config.design_max_turns,
             gate=StopGate(f"{stage.label} 방향", check, self.config.max_gate_blocks),
@@ -871,18 +866,18 @@ def _choice_readme(
     lines = ["# 선택 대기", "", f"아이디어: {idea}", "", f"지금까지 비용 추정 ${cost:.2f}", ""]
     if error:
         lines += [f"직전 선택 오류: {error}", ""]
-    lines += ["구현 방식(구조)과 디자인 방향을 따로 골라 이어서 실행하라. 모델, effort, 예산은 처음 실행의 값을 이어 쓴다.", ""]
+    lines += ["고르는 방식(사용 흐름)과 디자인 방향을 따로 골라 이어서 실행하라. 모델, effort, 예산은 처음 실행의 값을 이어 쓴다.", ""]
     cmd = [f"uv run mvpgen --out {out_dir} --resume {run_dir.name}"]
 
     if "spec" in choice:
-        lines += [f"## 구현 방식: {choice['spec']['id']}로 정해짐 ({choice['spec']['by']})", ""]
+        lines += [f"## 고르는 방식: {choice['spec']['id']}로 정해짐 ({choice['spec']['by']})", ""]
     else:
-        lines += ["## 구현 방식 (spec-candidates/)", "", f"critic 판단: {screening.summary}", ""]
+        lines += ["## 고르는 방식 (spec-candidates/)", "", f"critic 판단: {screening.summary}", ""]
         for v in screening.candidates:
             cand = candidate(run_dir / "spec-candidates", v.id)
             mark = "추천, " if v.id == screening.recommended else ""
             lines += [f"### {v.id} ({mark}{'viable' if v.viable else '제외'}, {v.score}점)", "",
-                      f"- 결정: {cand['decision']}", f"- 선택: {cand['approach']}", f"- critic: {v.summary}"]
+                      f"- 무엇을 고르나: {cand['decision']}", f"- 이 후보의 방식: {cand['approach']}", f"- critic: {v.summary}"]
             risks = _section((run_dir / RESEARCH_DIRNAME / f"{v.id}.md").read_text(encoding="utf-8"), "## 위험") \
                 if (run_dir / RESEARCH_DIRNAME / f"{v.id}.md").exists() else ""
             if risks:

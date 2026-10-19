@@ -77,7 +77,7 @@ def make_fake_agent(calls, fail_first=("prd-critic",), screen=None):
             # 첫 종료 시도: 산출물이 없어 gate가 막아야 한다
             first = await gate({"hook_event_name": "Stop", "stop_hook_active": False}, None, None)
             assert first["decision"] == "block" and "concepts.json" in first["reason"]
-            cands = sorted(p.stem for p in (cwd / "design-candidates").glob("*.md"))
+            cands = sorted(p.stem for p in (cwd / "design-candidates").glob("*.md") if p.name != "INDEX.md")
             dirs = [{"id": i, "kind": k, "sources": [cands[n]], "metaphor": "m", "first_screen": "f", "risks": "r",
                      "colors": {"text": "#111111", "background": "#fafafa"}}
                     for n, (i, k) in enumerate([("A", "baseline"), ("B", "unexpected"), ("C", "unexpected")])]
@@ -291,7 +291,7 @@ async def test_design_auto_pauses_for_choice_then_resumes(tmp_path, monkeypatch)
     run_dir = tmp_path / "run"
     run_dir.mkdir()
     config = RunConfig(idea="할 일 목록", out_dir=tmp_path, budget_usd=5, design="auto",
-                       design_library=make_library(tmp_path / "lib"), design_candidates=3, design_seed=7)
+                       design_library=make_library(tmp_path / "lib"))
 
     # 1차: 방향 3개를 만들고 사람의 선택을 기다리며 멈춘다. 실패가 아니다
     pipe = Pipeline(config, run_dir)
@@ -300,15 +300,17 @@ async def test_design_auto_pauses_for_choice_then_resumes(tmp_path, monkeypatch)
     assert [c[0] for c in calls] == ["prd", "prd-critic", "prd", "prd-critic", "spec", "research-a", "research-b", "spec-screen-critic", "design-directions"]
     report = json.loads((run_dir / "run_report.json").read_text())
     assert report["status"] == "awaiting_choice" and report["error"] is None
-    assert report["design"]["seed"] == 7 and len(report["design"]["candidates"]) == 3
-    assert all(c in calls[-1][1] for c in report["design"]["candidates"])
+    # 무작위로 뽑지 않고 라이브러리 전체를 목록과 함께 두며, 에이전트가 목록을 보고 고른다
+    assert len(report["design"]["candidates"]) == 5 and "seed" not in report["design"]
+    assert "design-candidates/INDEX.md" in calls[-1][1]
+    assert "- brand3: " in (run_dir / "design-candidates" / "INDEX.md").read_text()
     readme = (run_dir / "README.md").read_text()
     # viable 구현 후보가 b 하나라 디자인 방향만 고르면 된다
     assert "### C (unexpected)" in readme and "--resume run" in readme and "--choose-design <id>" in readme
     assert "- 미리보기: previews/C.html" in readme
     # 미리보기는 기능 id를 받아 만든다
     assert "data-feature로 표시할 기능: F1" in calls[-1][1]
-    assert "--choose-spec" not in readme and "구현 방식: b로 정해짐 (only_viable)" in readme
+    assert "--choose-spec" not in readme and "고르는 방식: b로 정해짐 (only_viable)" in readme
 
     # 2차: 고른 방향으로 DESIGN.md를 쓰고 끝까지 간다. 방향은 다시 만들지 않는다
     calls.clear()
@@ -337,7 +339,7 @@ async def test_design_unknown_choice_keeps_waiting(tmp_path, monkeypatch):
     run_dir = tmp_path / "run"
     run_dir.mkdir()
     config = RunConfig(idea="x", out_dir=tmp_path, budget_usd=5, design="auto",
-                       design_library=make_library(tmp_path / "lib"), design_candidates=3)
+                       design_library=make_library(tmp_path / "lib"))
     assert await Pipeline(config, run_dir).run() is False
 
     config.choose_design = "Z"
@@ -356,14 +358,15 @@ async def test_design_resume_keeps_candidates(tmp_path, monkeypatch):
     run_dir = tmp_path / "run"
     run_dir.mkdir()
     lib = make_library(tmp_path / "lib", n=10)
-    config = RunConfig(idea="x", out_dir=tmp_path, budget_usd=5, design="auto", design_library=lib, design_candidates=3,
+    config = RunConfig(idea="x", out_dir=tmp_path, budget_usd=5, design="auto", design_library=lib,
                        choose_design="A")
     pipe = Pipeline(config, run_dir)
-    pipe.state["design"] = {"seed": 1, "candidates": ["brand2", "brand5", "brand9"]}
+    pipe.state["design"] = {"library": str(lib), "candidates": ["brand2", "brand5", "brand9"]}
     pipe._save()
 
     assert await pipe.run() is True
-    assert sorted(p.stem for p in (run_dir / "design-candidates").glob("*.md")) == ["brand2", "brand5", "brand9"]
+    # 이어 할 때는 처음 기록한 원천 목록을 그대로 쓴다
+    assert sorted(p.stem for p in (run_dir / "design-candidates").glob("*.md")) == ["INDEX", "brand2", "brand5", "brand9"]
 
 
 async def test_design_provided_file_skips_agent(tmp_path, monkeypatch):
@@ -476,7 +479,7 @@ async def test_two_viable_specs_pause_for_a_human_choice(tmp_path, monkeypatch):
     readme = (run_dir / "README.md").read_text()
     # 구현 후보마다 결정, 선택, 점수, 조사로 본 위험을 보여 주고, 디자인 방향은 묻지 않는다(design off)
     assert "### a (viable, 85점)" in readme and "### b (추천, viable, 90점)" in readme
-    assert "- 선택: MMCA API 실시간" in readme and "조사로 본 위험" in readme
+    assert "- 이 후보의 방식: MMCA API 실시간" in readme and "조사로 본 위험" in readme
     assert "--choose-spec <id>" in readme and "--choose-design" not in readme
 
     # 고르지 않은 것을 고르면 대기가 남는다

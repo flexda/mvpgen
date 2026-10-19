@@ -61,20 +61,24 @@ spec 작성 규칙:
 
 SPEC_SYSTEM = f"""\
 너는 기획 문서(PRD.md)를 실행 가능한 명세로 바꾸는 제품 엔지니어다.
-spec-candidates/ 폴더에 서로 다른 구현 후보를 지정된 개수만큼 <id>.json 파일로 작성한다(id는 a, b, c 순서). 다른 파일은 만들지 않는다.
+spec-candidates/ 폴더에 고르는 방식이 서로 다른 후보를 지정된 개수만큼 <id>.json 파일로 작성한다(id는 a, b, c 순서). 다른 파일은 만들지 않는다.
+사람이 이 후보 가운데 하나를 고른다. 후보 사이의 차이가 사람이 보고 고를 만한 것이어야 한다.
 
 후보 파일 형식:
 {{
-  "decision": "이 앱에서 가장 위험한 결정 하나 (모든 후보가 같은 문장)",
-  "approach": "그 결정에 대한 이 후보의 선택과 이유",
+  "decision": "사용자가 이 앱의 핵심 가치에 닿기 위해 무엇을 하는가 (모든 후보가 같은 문장)",
+  "approach": "이 후보의 고르는 방식: 사용자가 하는 일, 앱이 보여 주는 것, 그 규칙",
   "spec": {json.dumps(SPEC_EXAMPLE, ensure_ascii=False, indent=2)}
 }}
 
 후보를 나누는 방법:
-- 먼저 이 앱에서 틀리면 가장 비싼 결정 하나를 고른다(예: 데이터를 실시간 API로 받을지 수집해 둔 파일로 쓸지, 서버 렌더링인지 정적 페이지인지).
-  후보는 그 결정에서만 서로 다른 선택을 한다. 일부러 나쁜 후보를 만들지 않는다. 각 후보는 그 선택에서 최선이어야 한다.
-- 기능은 PRD.md의 Features를 그대로 따른다. 모든 후보의 feature id와 범위가 같다.
-- 요구 원문이 스택이나 방식을 정해 두었으면 그것을 지키고, 남은 결정에서 후보를 나눈다.
+- 후보는 사용자가 겪는 고르는 방식(사용 흐름)에서 서로 다르다. 예를 들어 전시 추천 앱이라면 "추천 Top 3를 바로 보여 준다",
+  "가진 시간을 고르면 동선을 짜 준다", "질문 하나에 답하면 남은 기간으로 나눠 준다"처럼 사용자가 하는 일과 받는 결과가 다르다.
+- 하나는 이 분야 사용자가 예상하는 무난한 방식으로 두고, 나머지는 흔하지 않은 방식으로 한다. 일부러 나쁜 후보를 만들지 않는다.
+- 기능 id와 범위는 PRD.md의 Features를 그대로 따른다. 모든 후보의 feature id가 같다. 방식에 따라 기능의 설명과 완료 기준이 달라진다.
+- 스택과 데이터 출처는 후보마다 그 방식에 가장 맞게 고른다. 방식에 필요한 데이터(예: 동네, 관람 시간)가 있는지는 조사원이 확인한다.
+  필요한 데이터를 가정했으면 approach에 그렇다고 적는다.
+- 요구 원문이 고르는 방식을 정해 두었으면 그것을 지키고, 그 안에서 다른 점(보여 주는 순서, 묻는 질문 등)으로 후보를 나눈다.
 
 """ + _SPEC_RULES
 
@@ -136,7 +140,8 @@ _DESIGN_RULES = """\
 DIRECTIONS_SYSTEM = """\
 너는 뻔한 화면을 싫어하는 아트 디렉터다. 기획 문서(PRD.md)를 받아 이 앱의 디자인 방향 3개와 미리보기를 만든다.
 구현 방식(spec)은 아직 사람이 고르지 않았다. 사람은 이 미리보기로 디자인만 따로 고른다. 너는 고르지 않는다.
-design-candidates/에 다른 서비스의 디자인 시스템 문서(DESIGN.md 형식)가 있다. 이 후보만 원천으로 쓴다.
+design-candidates/에 여러 서비스의 디자인 시스템 문서(DESIGN.md 형식)가 있다. 이 안에서만 원천을 고른다.
+먼저 design-candidates/INDEX.md(이름과 한 줄 설명)를 읽고 이 앱의 분야에 어울리는 후보를 고른 뒤, 고른 문서만 끝까지 읽는다.
 현재 작업 폴더에 concepts.json과 previews/<방향 id>.html 세 개만 작성한다.
 
 의외성이란: 이 앱의 분야에 어울리는 스타일 가운데 흔하지 않은 표현이다. 다른 분야의 디자인 언어를 억지로 옮기는 것이 아니다.
@@ -166,7 +171,6 @@ concepts.json:
 - 기능마다 그것을 보여 주는 요소에 data-feature="F1"처럼 PRD의 feature id를 붙인다.
 - 실제 데이터로 채운다. context/ 자료가 있으면 거기서 몇 건을 옮겨 쓴다. 자리표시 문구(Lorem ipsum)를 쓰지 않는다.
 - CSS는 파일 안에 둔다. 외부 글꼴, 이미지, CSS, 스크립트를 부르지 않는다(http, //, @import 금지). 360px 폭에서 가로로 넘치지 않게 한다.
-- 후보 문서는 길다. 먼저 각 문서의 앞부분(description, Overview)만 훑고, 방향으로 쓸 후보만 끝까지 읽는다.
 
 """ + _DESIGN_RULES
 
@@ -295,14 +299,11 @@ def spec_revise_prompt(
     )
 
 
-def directions_prompt(
-    idea: str, candidates: list[str], feature_ids: list[str], context_files: list[str] | None = None,
-) -> str:
-    listing = "\n".join(f"- {c}" for c in candidates)
+def directions_prompt(idea: str, feature_ids: list[str], context_files: list[str] | None = None) -> str:
     prompt = (
         f"아이디어: {idea}\n\nPRD.md를 읽고 concepts.json에 디자인 방향 3개를, previews/에 방향마다 미리보기를 작성하라.\n"
-        f"미리보기마다 data-feature로 표시할 기능: {', '.join(feature_ids)}\n\n"
-        f"# 이번 후보 (design-candidates/)\n{listing}"
+        f"미리보기마다 data-feature로 표시할 기능: {', '.join(feature_ids)}\n"
+        "원천은 design-candidates/INDEX.md에서 고른다."
     )
     if context_files:
         prompt += "\n\n# 참고 자료 (context/)\n앱이 다룰 데이터다. 화면 요소를 정할 때 실제 필드를 참고한다.\n" + "\n".join(

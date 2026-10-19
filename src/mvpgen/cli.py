@@ -42,8 +42,6 @@ def generate(
     context: Annotated[Path | None, typer.Option(help="미리 조사한 참고 자료 폴더. 결과 폴더의 context/로 복사해 PRD, Spec, Build가 읽는다")] = None,
     design: Annotated[str | None, typer.Option(help="auto(기본): 라이브러리 후보로 디자인 방향 3개를 만들고 사람의 선택을 기다린다, off: 끈다, 파일 경로: 그 DESIGN.md를 그대로 쓴다. --resume에서 생략하면 처음 값")] = None,
     design_library: Annotated[Path, typer.Option(help="DESIGN.md 라이브러리 폴더 (<brand>/DESIGN.md)")] = Path("design-library"),
-    design_candidates: Annotated[int, typer.Option(help="design auto에서 무작위로 뽑을 후보 수")] = 8,
-    design_seed: Annotated[int | None, typer.Option(help="후보 추출 seed. 비우면 무작위이며 state.json에 기록된다")] = None,
     spec_candidates: Annotated[int | None, typer.Option(min=1, max=4, help="Spec 단계가 만들 구현 후보 수. critic이 하나를 고른다. 기본 2, --resume에서 생략하면 처음 값")] = None,
     research: Annotated[bool | None, typer.Option(
         "--research/--no-research", help="Spec 후보마다 웹 검색으로 조사해 research/에 남긴다. 기본 켬, --resume에서 생략하면 처음 값"
@@ -173,8 +171,7 @@ def generate(
         max_review_rounds=max_review_rounds, max_gate_blocks=max_gate_blocks,
         max_fix_rounds=max_fix_rounds, pass_threshold=pass_threshold,
         protected_paths=protected, mvp_env=mvp_env, lessons_path=lessons.resolve(),
-        design=design, design_library=design_library.resolve(), design_candidates=design_candidates,
-        design_seed=design_seed, choose_spec=choose_spec, spec_reason=spec_reason,
+        design=design, design_library=design_library.resolve(), choose_spec=choose_spec, spec_reason=spec_reason,
         choose_design=choose_design, design_reason=design_reason, spec_candidates=spec_candidates, research=research,
     )
     typer.echo(f"아이디어: {idea}\n폴더: {run_dir}\n모델: {model} (effort {effort}), 예산 ${budget:.2f}")

@@ -1,9 +1,8 @@
-"""Design 단계: 디자인 라이브러리에서 후보를 무작위로 뽑고, 산출물(concepts.json, DESIGN.md)을 검사한다."""
+"""Design 단계: 디자인 라이브러리를 목록과 함께 실행 폴더에 두고, 산출물(concepts.json, 미리보기, DESIGN.md)을 검사한다."""
 
 from __future__ import annotations
 
 import json
-import random
 import re
 import shutil
 from pathlib import Path
@@ -54,10 +53,24 @@ def list_library(library: Path) -> list[str]:
     return sorted(p.parent.name for p in library.glob("*/DESIGN.md"))
 
 
-def pick_candidates(library: Path, n: int, seed: int) -> list[str]:
-    """seed가 같으면 같은 후보를 돌려준다. 이름 순으로 정렬해 돌려준다."""
-    brands = list_library(library)
-    return sorted(random.Random(seed).sample(brands, min(n, len(brands))))
+INDEX_NAME = "INDEX.md"
+INDEX_DESCRIPTION_MAX = 240
+
+
+def _description(design_md: str) -> str:
+    """프런트매터의 description 한 줄. 없으면 빈 문자열."""
+    m = re.search(r"^description:\s*(.+)$", design_md.split("---", 2)[1] if design_md.startswith("---") else "", re.MULTILINE)
+    return m.group(1).strip().strip('"')[:INDEX_DESCRIPTION_MAX] if m else ""
+
+
+def write_index(library: Path, brands: list[str], run_dir: Path) -> Path:
+    """에이전트가 원천을 고를 수 있게 이름과 한 줄 설명 목록을 design-candidates/INDEX.md로 쓴다."""
+    lines = ["# 디자인 원천 목록", "", "이름: 한 줄 설명. 분야에 어울리는 것만 골라 design-candidates/<이름>.md를 끝까지 읽는다.", ""]
+    for b in brands:
+        lines.append(f"- {b}: {_description((library / b / 'DESIGN.md').read_text(encoding='utf-8'))}")
+    path = run_dir / CANDIDATES_DIRNAME / INDEX_NAME
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
 
 
 def copy_candidates(library: Path, brands: list[str], run_dir: Path) -> list[str]:

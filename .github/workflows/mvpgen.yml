@@ -46,11 +46,6 @@ on:
         required: false
         default: "auto"
         type: string
-      design_seed:
-        description: "디자인 후보 추출 seed. 비우면 무작위"
-        required: false
-        default: ""
-        type: string
 
 permissions:
   id-token: write   # GitHub OIDC 토큰 발급에 필요
@@ -99,13 +94,11 @@ jobs:
           EFFORT: ${{ inputs.effort }}
           CONTEXT: ${{ inputs.context }}
           DESIGN: ${{ inputs.design }}
-          DESIGN_SEED: ${{ inputs.design_seed }}
           WORKSPACE_ID: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
         run: |
           # 빈 값이 우선순위를 차지하지 않도록 값이 있을 때만 export한다
           if [ -n "$WORKSPACE_ID" ]; then export ANTHROPIC_WORKSPACE_ID="$WORKSPACE_ID"; fi
           args=(--budget "$BUDGET" --effort "$EFFORT" --design "${DESIGN:-auto}")
-          if [ -n "$DESIGN_SEED" ]; then args+=(--design-seed "$DESIGN_SEED"); fi
           if [ -n "$CONTEXT" ]; then args+=(--context "$CONTEXT"); fi
           uv run mvpgen "$IDEA" "${args[@]}"
 

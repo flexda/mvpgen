@@ -3,7 +3,7 @@ import json
 import pytest
 
 from mvpgen.design import (DESIGN_HEADINGS, check_design, check_design_md, check_directions, check_previews, choose_direction,
-                           contrast_ratio, copy_candidates, list_library, pick_candidates)
+                           contrast_ratio, copy_candidates, write_index)
 
 CANDIDATES = ["airbnb", "nintendo-2001", "spacex"]
 
@@ -39,13 +39,15 @@ def write_run(tmp_path, concepts, design_md):
     (tmp_path / "DESIGN.md").write_text(design_md)
 
 
-def test_pick_candidates_is_reproducible_and_bounded(tmp_path):
-    lib = make_library(tmp_path / "lib", [f"b{i:02d}" for i in range(20)])
-    first = pick_candidates(lib, 8, seed=42)
-    assert first == pick_candidates(lib, 8, seed=42)
-    assert len(first) == 8 and set(first) <= set(list_library(lib))
-    assert pick_candidates(lib, 8, seed=43) != first
-    assert len(pick_candidates(lib, 50, seed=1)) == 20
+def test_write_index_lists_name_and_description(tmp_path):
+    lib = tmp_path / "lib"
+    (lib / "stedelijk").mkdir(parents=True)
+    (lib / "stedelijk" / "DESIGN.md").write_text('---\nname: s\ndescription: "Swiss museum grid, black on white"\ncolors:\n---\n# x')
+    (lib / "plain").mkdir()
+    (lib / "plain" / "DESIGN.md").write_text("# 프런트매터 없음")
+    (tmp_path / "run" / "design-candidates").mkdir(parents=True)
+    index = write_index(lib, ["plain", "stedelijk"], tmp_path / "run").read_text()
+    assert "- stedelijk: Swiss museum grid, black on white" in index and "- plain: \n" in index
 
 
 def test_copy_candidates_flattens_into_run_dir(tmp_path):
