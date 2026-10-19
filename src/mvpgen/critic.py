@@ -105,15 +105,17 @@ class Best:
 class RoundTracker:
     """라운드마다 산출물을 저장하고, 가장 높은 점수의 라운드를 기억한다."""
 
-    def __init__(self, paths: list[Path], root: Path, snap_root: Path) -> None:
+    def __init__(self, paths: list[Path], root: Path, snap_root: Path, rollback: bool = True) -> None:
         self.paths = paths
         self.root = root
         self.snap_root = snap_root
+        # False면 점수가 떨어져도 산출물을 되돌리지 않는다 (DB에 적용한 마이그레이션은 파일만 되돌릴 수 없다)
+        self.rollback = rollback
         self.best: Best | None = None
 
     def record(self, round_no: int, review: Review) -> bool:
         """이번 라운드를 기록한다. 직전 최고점보다 낮으면 최고점 산출물로 되돌리고 True를 돌려준다."""
-        if self.best is not None and review.score < self.best.review.score:
+        if self.rollback and self.best is not None and review.score < self.best.review.score:
             restore(self.paths, self.root, self.best.snapshot_dir)
             return True
         snap = self.snap_root / f"round-{round_no}"
@@ -122,5 +124,5 @@ class RoundTracker:
         return False
 
     def restore_best(self) -> None:
-        if self.best is not None:
+        if self.rollback and self.best is not None:
             restore(self.paths, self.root, self.best.snapshot_dir)

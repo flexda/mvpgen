@@ -1,11 +1,12 @@
 # secrets
 
-API 키를 두는 폴더. `claude.env`와 `mvp.env`는 `.gitignore`로 제외되고, 권한은 본인만 읽을 수 있게(600) 설정되어 있다.
+API 키를 두는 폴더. `claude.env`, `mvp.env`, `supabase.env`는 `.gitignore`로 제외되고, 권한은 본인만 읽을 수 있게(600) 설정되어 있다.
 
 | 파일 | 용도 | 누가 쓰나 |
 | --- | --- | --- |
 | `claude.env` | `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` 등 Claude 호출용 인증. 구독 로그인을 쓰면 비워 둔다 | mvpgen 자신 |
 | `mvp.env` | 생성될 MVP가 쓸 외부 API 키 | Build 세션, 생성된 앱의 테스트와 실행 |
+| `supabase.env` | `SUPABASE_DB_URL`: `mvpdata`가 쓸 Supabase Session pooler 접속 문자열 | mvpgen의 DB 검사(`supabase db push`, 수집 명령). 에이전트 세션에는 넘기지 않는다 |
 
 - `*.example`은 형식 예시다. 실제 값은 넣지 않는다.
 - 셸에 이미 export된 값이 `claude.env`보다 우선한다.

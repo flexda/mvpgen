@@ -40,14 +40,15 @@ class StageFailed(RuntimeError):
 
 
 # --stage-model에 쓸 수 있는 키. critic은 세 critic 모두에 적용되고, 개별 critic 키가 그보다 우선한다
-STAGE_MODEL_KEYS = ("plan", "design", "build", "critic", "plan-critic", "design-critic", "build-critic")
+STAGE_MODEL_KEYS = ("plan", "design", "build", "critic", "plan-critic", "design-critic", "build-critic",
+                    "data-plan", "data-build", "data-plan-critic", "data-build-critic")
 
 
 def model_for(stage: str, stage_models: dict[str, str], default: str) -> str:
-    """세션 이름(plan, build-fix1, design-critic 등)에 쓸 모델. build-fixN은 build 설정을 따른다."""
+    """세션 이름(plan, build-fix1, design-critic 등)에 쓸 모델. build-fixN, data-build-fixN은 각 build 설정을 따른다."""
     if stage.endswith("-critic"):
         return stage_models.get(stage) or stage_models.get("critic") or default
-    base = "build" if stage.startswith("build-fix") else stage
+    base = re.sub(r"-fix\d+$", "", stage)
     return stage_models.get(base) or default
 
 
@@ -97,6 +98,8 @@ class RunConfig:
     design_library: Path | None = None
     design_candidates: int = 8
     design_seed: int | None = None
+    # 에이전트가 파일, 명령에 직접 쓰면 막을 값 (mvp_env 밖의 비밀값, 예: DB 접속 문자열)
+    extra_secrets: list[str] = field(default_factory=list)
 
 
 def make_slug(idea: str, now: datetime | None = None) -> str:
@@ -213,6 +216,7 @@ class Pipeline:
             log_path=self.run_dir / "logs" / f"{stage}-r{round_no}.log",
             env=self.config.mvp_env,
             protected=self.config.protected_paths,
+            extra_secrets=self.config.extra_secrets,
             **kwargs,
         )
         self._record_run(run, round_no, model)
@@ -248,9 +252,10 @@ class Pipeline:
         rubric: str,
         critic_tools: list[str],
         critic_port: bool,
+        rollback: bool = True,
     ) -> Review:
         info = self._stage(stage)
-        tracker = RoundTracker(paths, self.run_dir, self.run_dir / "snapshots" / stage)
+        tracker = RoundTracker(paths, self.run_dir, self.run_dir / "snapshots" / stage, rollback=rollback)
         feedback: str | None = None
         last: Review | None = None
 
@@ -281,9 +286,7 @@ class Pipeline:
                 stage=f"{stage}-critic",
                 round_no=round_no,
                 system_prompt=prompts.CRITIC_SYSTEM,
-                prompt=prompts.critic_prompt(stage, self.config.idea, rubric, review_rel, port,
-                                          has_context=bool(list_context(self.run_dir)),
-                                          has_design=(self.run_dir / "DESIGN.md").exists()),
+                prompt=self._critic_prompt(stage, rubric, review_rel, port),
                 tools=critic_tools,
                 writable=[review_path],
                 max_turns=self.config.critic_max_turns,
@@ -322,6 +325,11 @@ class Pipeline:
         best = tracker.best
         print(f"  {stage}: 개정 한도에 도달해 최고점 라운드({best.round if best else '-'})로 진행한다", flush=True)
         return best.review if best else last  # type: ignore[return-value]
+
+    def _critic_prompt(self, stage: str, rubric: str, review_rel: str, port: int | None) -> str:
+        return prompts.critic_prompt(stage, self.config.idea, rubric, review_rel, port,
+                                     has_context=bool(list_context(self.run_dir)),
+                                     has_design=(self.run_dir / "DESIGN.md").exists())
 
     # ---- 단계 ----
     async def plan(self) -> None:

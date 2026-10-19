@@ -26,6 +26,10 @@
 | 실행 결과 보관 (2026-10-18) | Actions artifact를 `workspace/ci-<run>/`에 내려받고 스크린샷을 함께 둔다 | 기존 실행과 같은 위치. artifact는 14일 뒤 지워진다 |
 | 구독 인증 인정 (2026-10-18) | `detect_auth()`가 `/login` 구독 로그인과 `CLAUDE_CODE_OAUTH_TOKEN`을 인정한다. 우선순위는 Claude Code 인증 문서를 따른다 | 로컬에서 API 크레딧 없이 실험하기 위해. PR #4 |
 | 단계별 모델 (2026-10-18) | `--stage-model STAGE=MODEL`로 plan, design, build, critic별 모델을 정한다. 기본값은 바꾸지 않는다 | 사용자 요청. 기본값을 바꾸면 전부 Opus인 기준선과 비교할 수 없다. PR #5 |
+| 데이터 파이프라인 모드 (2026-10-19) | API 자료를 받아 Supabase 적재 파이프라인을 만드는 독립 모드 `mvpdata`. 기존 Plan/Design/Build 흐름은 그대로 둔다 | 사용자 선택. 목적은 mvpgen이 외부 DB 적재까지 할 수 있는지 보는 것. 브랜치 `exp/supabase-pipeline` |
+| 적재 대상 (2026-10-19) | 클라우드 Supabase 실험 전용 새 프로젝트 | 사용자 선택. 프로젝트 생성과 접속 문자열 입력은 사용자가 한다 |
+| API 정보 입력 (2026-10-19) | 기존 `--context` 폴더 재사용, 키는 `mvp.env` | 사용자 선택. 비밀값 검사 로직을 그대로 쓴다 |
+| 마이그레이션 방식 (2026-10-19) | Supabase 정식 규칙: 적용한 파일은 잠그고 변경은 새 파일로 추가. 적용은 `supabase db push --db-url` | 사용자 선택(A안). 검사마다 스키마를 지우고 다시 만드는 B안은 정식 흐름과 달라 버림 |
 
 ## 구조
 
@@ -316,6 +320,54 @@ PR #1을 main에 병합(`69c9be6`)한 뒤 같은 입력으로 두 번 실행했�
 - 실험 A안: 전부 Opus로 기준선을 완주한 뒤 추천 조합 실행
 - 단계 단독 실행 옵션(`--stop-after`)
 - Actions 워크플로에 `stage_models` 입력 추가
+
+## 2026-10-19: 데이터 파이프라인 모드 (mvpdata)
+
+사용자가 "mvpgen에 API 정보를 넘기면 Supabase에 데이터 파이프라인을 만드는 에이전트"를 새 worktree에서 실험하기로 했다. worktree는 `/Users/reflectdata/Project/loop-2-supabase`, 브랜치는 `exp/supabase-pipeline`(main `2c12e34`에서 분기)이다.
+
+### 만든 것
+
+| 파일 | 내용 |
+| --- | --- |
+| `src/mvpgen/data_cli.py` | `mvpdata` 진입점. `mvpgen`에 두 번째 명령을 더하면 `mvpgen "아이디어"` 형식이 깨져 별도 script로 뒀다 |
+| `src/mvpgen/datapipe.py` | `Pipeline`을 물려받은 `DataPipeline`. 단계 data-plan, data-build, 최종 검증 |
+| `src/mvpgen/dataspec.py` | `pipeline.json` 스키마(원천, raw/core/mart 테이블, 품질 검사 SQL, 명령)와 Plan 검사 |
+| `src/mvpgen/dbverify.py` | LLM 없는 DB 검사: 마이그레이션 잠금, install/test, `supabase db push`, 테이블 확인, 적재 2회 행 수 비교, 품질 SQL. 근거는 `db/*.md` |
+| `src/mvpgen/data_prompts.py` | 데이터 모드 전용 프롬프트와 루브릭. 앱 모드 프롬프트의 "별도 DB 금지", "실행 중 API 호출 금지"와 충돌해 섞지 않았다 |
+| 기존 파일 | `RunConfig.extra_secrets`(가드에 DB 비밀값 추가), `_critic_prompt` 교체 지점, `RoundTracker(rollback=False)`, `model_for`가 `*-fixN`을 각 build로 매핑 |
+| `contexts/mmca-api/` | 첫 실험용 자료. MMCA API 문서만 둔다 |
+| `secrets/supabase.env.example` | `SUPABASE_DB_URL` 형식 |
+
+테스트 121개 통과(새 19개). 실제 Supabase와 에이전트 실행은 아직 하지 않았다.
+
+### 확인한 사실
+
+| 항목 | 내용 | 출처 |
+| --- | --- | --- |
+| 마이그레이션 관리 | 파일은 `supabase/migrations/<시각>_이름.sql`로 git에서 관리하고, DB는 `supabase_migrations.schema_migrations`에 적용 기록을 남긴다. `db push`는 적용하지 않은 파일만 실행한다 | Supabase 문서(Database migrations, CLI workflows) |
+| CLI 옵션 | 설치된 CLI 2.40.7의 `db push`에 `--db-url`(퍼센트 인코딩 필요), `--workdir`, `--dry-run`, `--yes`가 있다 | `supabase db push --help` |
+| 작업 폴더 | `config.toml` 없이 `supabase/migrations`만 있어도 `db push`가 DB 접속 단계까지 간다 | 가짜 주소로 `--dry-run` 실행 |
+| 오류 출력 | 접속 실패 메시지에 호스트와 사용자 이름이 나오고 비밀번호는 나오지 않는다. 그래도 mvpgen은 가린다 | 같은 실행 |
+| 로컬 도구 | Supabase CLI는 `~/.local/bin/supabase`에 있고, Docker는 설치되어 있지만 데몬이 꺼져 있다. psql은 없다 | `which`, `docker info` |
+
+미확인: `schema_migrations.version`이 파일 이름의 14자리 시각과 같은 값인지(잠금이 이 가정을 쓴다), MMCA API 일일 호출 한도, Session pooler에서 `db push`가 동작하는지. 첫 실제 실행에서 확인한다.
+
+### 결정 과정
+
+| 순서 | 질문이나 제안 | 결정 | 버린 안과 이유 |
+| --- | --- | --- | --- |
+| 1 | 구성 방식 | 독립 모드 | 기존 흐름의 새 단계(Plan -> Data -> Design -> Build): 실행 비용과 변경 범위가 크다 |
+| 2 | Supabase 위치 | 클라우드 프로젝트 | 로컬(`supabase start`, Docker): 추천했으나 사용자가 클라우드를 골랐다 |
+| 3 | API 정보 입력 | `--context` 폴더 | CLI 인자(`--api-url` 등): 문서 없이 에이전트가 응답을 탐색해야 한다 |
+| 4 | 검사 때마다 스키마를 지우고 다시 만들기 | 사용자가 "정식으로 쓰면 SQL 파일이 없어지나"라고 물음. 없어지지 않고, 지우기는 개발 중 편법이었다고 설명 | 없음 |
+| 5 | 마이그레이션 방식 | A: 정식 규칙(잠금 + 새 파일 추가) | B: 매번 초기화. 최종 SQL만 보고, 변경을 누적하는 능력은 보지 못한다 |
+| 6 | 프로젝트 | 실험 전용 새 프로젝트 | 기존 프로젝트: A안이라 위험은 작지만 정리가 번거롭다 |
+
+### 사용자가 할 일
+
+1. supabase.com에서 새 프로젝트를 만든다.
+2. 대시보드 Connect > Session pooler 문자열을 main checkout의 `secrets/supabase.env`에 `SUPABASE_DB_URL=...`로 넣는다. 비밀번호의 특수문자는 퍼센트 인코딩한다.
+3. 실행은 확인받은 뒤 worktree에서 `uv run mvpdata ... --secrets /Users/reflectdata/Project/loop-2-test/secrets`로 한다(worktree에는 실제 secrets가 없다).
 
 ## 커밋
 

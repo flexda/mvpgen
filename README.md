@@ -173,6 +173,49 @@ workspace/
     README.md           # 실행 방법 요약
 ```
 
+## 데이터 파이프라인 모드 (`mvpdata`, 실험)
+
+API 자료를 받아 Supabase(Postgres) 적재 파이프라인을 만든다. 앱을 만들지 않는다. 브랜치 `exp/supabase-pipeline`의 실험 기능이다.
+
+```bash
+uv run mvpdata "MMCA 전시 정보를 매일 Supabase에 적재" --context contexts/mmca-api
+uv run mvpdata "..." --context contexts/mmca-api --check-pages 2 --final-pages 0 --budget 5
+uv run mvpdata --resume data-20261019-150000-mmca
+```
+
+준비:
+
+1. supabase.com에서 실험 전용 프로젝트를 만든다. 검사 때마다 실제로 마이그레이션을 적용하고 적재한다.
+2. 대시보드 Connect > Session pooler 문자열을 `secrets/supabase.env`의 `SUPABASE_DB_URL`에 넣는다 (`supabase.env.example` 참고).
+3. API 키는 앱 모드와 같이 `secrets/mvp.env`에 둔다 (예: `MMCA_SERVICE_KEY`).
+4. Supabase CLI가 PATH에 있어야 한다 (`--supabase-bin`으로 지정 가능). Docker는 필요 없다.
+
+단계:
+
+| 단계 | 산출물 | 자동 검사 (Stop gate) |
+| --- | --- | --- |
+| data-plan | `PIPELINE.md`, `pipeline.json` (원천, raw/core/mart 테이블, 품질 검사 SQL, 명령) | 스키마, 필수 제목, 키 이름, 참고 문서 경로 |
+| data-build | `app/supabase/migrations/*.sql`, 수집 코드, 테스트 | 아래 순서 |
+| 최종 검증 | `db/final.md` | data-build와 같은 검사를 `--final-pages`(0이면 전체)로 |
+
+data-build 검사 순서 (LLM 없음):
+
+1. 마이그레이션 규칙: 이름 `<14자리 시각>_<이름>.sql`, 이미 적용한 파일은 고치거나 지우지 않음, 새 파일은 마지막 적용 파일보다 늦은 시각, 스키마는 raw, core, mart만, `drop schema`와 Supabase 관리 스키마(public, auth, storage 등) 금지.
+2. install, test: DB 접속 문자열 없이 돈다.
+3. `supabase db push --db-url`: 적용하지 않은 파일만 적용한다. 적용 기록은 DB의 `supabase_migrations.schema_migrations`에 남고, mvpgen은 적용된 파일의 sha256을 `db/ledger.json`에 잠근다.
+4. pipeline.json의 테이블이 모두 있는지 확인.
+5. 수집을 두 번 실행(`DATABASE_URL`, 페이지 제한 `--check-pages`)하고, `idempotent` 테이블의 행 수가 같은지 확인.
+6. checks의 SQL을 읽기 전용 트랜잭션에서 실행해 위반 행이 0인지 확인.
+
+결과는 `db/check-<n>.md`와 `.json`에 남는다. critic은 DB에 접속하지 않고 이 파일을 근거로 채점한다. `app/` 파일이 그대로면 직전 통과 결과를 다시 쓰고 API를 다시 부르지 않는다.
+
+안전장치:
+
+- 에이전트는 DB 접속 문자열을 받지 않는다. 값은 mvpgen이 실행하는 `db push`와 수집 명령에만 들어가고, 셸에 export한 값도 시작할 때 환경에서 지운다. 보고서와 로그에서는 접속 문자열과 비밀번호를 `***`로 가린다.
+- 에이전트가 접속 문자열이나 비밀번호를 파일, 명령에 쓰면 PreToolUse hook이 막는다.
+- data-build는 critic 점수가 떨어져도 `app/`을 되돌리지 않는다. 이미 DB에 적용한 마이그레이션을 파일만 되돌리면 DB 기록과 어긋나기 때문이다.
+- 단계별 모델 키는 `data-plan`, `data-build`(fix 포함), `critic`, `data-plan-critic`, `data-build-critic`이다.
+
 ## 동작 방식
 
 Python 오케스트레이터가 Plan, Design, Build, 최종 검증, 리포트 순서로 진행한다. 각 단계는 별도의 `query()` 세션이고, 결과는 파일로 넘긴다.
