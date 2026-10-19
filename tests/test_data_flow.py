@@ -11,7 +11,7 @@ from mvpgen.verify import StepResult, VerifyResult
 from test_dataspec import example, write_plan
 
 
-def make_fake_agent(calls, major_always=False):
+def make_fake_agent(calls, major_always=False, major_stage="data-build-critic"):
     async def fake_run_agent(*, stage, cwd, gate=None, prompt="", **kw):
         calls.append((stage, prompt, kw))
         rnd = int(str(kw["log_path"]).rsplit("-r", 1)[1].split(".")[0])
@@ -26,7 +26,7 @@ def make_fake_agent(calls, major_always=False):
             assert await gate({"hook_event_name": "Stop", "stop_hook_active": True}, None, None) == {}
         elif stage.endswith("-critic"):
             path = cwd / "reviews" / f"{stage.removesuffix('-critic')}-r{rnd}.json"
-            passed = not (stage == "data-build-critic" and (rnd == 1 or major_always))
+            passed = not (stage == major_stage and (rnd == 1 or major_always))
             # major_always면 critic이 pass와 높은 점수를 줘도 major가 남는다
             review = {"pass": passed or major_always, "score": 90 if passed or major_always else 70, "summary": "평가",
                       "issues": [] if passed else [{"severity": "major", "location": "ingest.py",
@@ -111,6 +111,16 @@ async def test_open_major_fails_run_even_if_verify_passes(tmp_path, monkeypatch)
     assert report["stages"]["verify"]["status"] == "passed"
     assert report["open_major"] == {"data-build": 1}
     assert "major 이슈가 남았다" in (run_dir / "README.md").read_text()
+
+
+async def test_open_major_in_plan_stops_before_build(tmp_path, monkeypatch):
+    calls, checks, sampled = [], [], []
+    monkeypatch.setattr(pipeline_mod, "run_agent", make_fake_agent(calls, major_always=True, major_stage="data-plan-critic"))
+    run_dir, pipe = make_pipe(tmp_path, checks, sampled, max_review_rounds=1)
+
+    assert await pipe.run() is False
+    assert [c[0] for c in calls] == ["data-plan", "data-plan-critic"] * 2 and sampled == [] and checks == []
+    assert "major" in json.loads((run_dir / "run_report.json").read_text())["error"]
 
 
 def test_app_mode_acceptance_ignores_major():

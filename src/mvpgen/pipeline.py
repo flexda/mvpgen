@@ -212,6 +212,10 @@ class Pipeline:
     def _is_accepted(self, review: Review) -> bool:
         return is_accepted(review, self.config.pass_threshold)
 
+    def _round_rank(self, review: Review) -> tuple:
+        """합격 여부 다음의 라운드 비교 기준. 합격한 라운드는 점수가 낮아도 불합격 라운드로 되돌리지 않는다."""
+        return (review.score,)
+
     async def _agent(self, *, stage: str, round_no: int, **kwargs: Any) -> AgentRun:
         model = model_for(stage, self.config.stage_models, self.config.model)
         run = await run_agent(
@@ -262,7 +266,8 @@ class Pipeline:
         rollback: bool = True,
     ) -> Review:
         info = self._stage(stage)
-        tracker = RoundTracker(paths, self.run_dir, self.run_dir / "snapshots" / stage, rollback=rollback)
+        tracker = RoundTracker(paths, self.run_dir, self.run_dir / "snapshots" / stage, rollback=rollback,
+                               rank=lambda r: (self._is_accepted(r), *self._round_rank(r)))
         feedback: str | None = None
         last: Review | None = None
 

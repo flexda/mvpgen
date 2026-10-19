@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -109,8 +110,11 @@ class Best:
 class RoundTracker:
     """라운드마다 산출물을 저장하고, 가장 높은 점수의 라운드를 기억한다."""
 
-    def __init__(self, paths: list[Path], root: Path, snap_root: Path, rollback: bool = True) -> None:
+    def __init__(self, paths: list[Path], root: Path, snap_root: Path, rollback: bool = True,
+                 rank: Callable[[Review], tuple] | None = None) -> None:
         self.paths = paths
+        # 라운드 비교 기준. 기본은 점수. 합격 여부나 major 유무를 점수보다 앞에 둘 수 있다
+        self.rank = rank or (lambda r: (r.score,))
         self.root = root
         self.snap_root = snap_root
         # False면 점수가 떨어져도 산출물을 되돌리지 않는다 (DB에 적용한 마이그레이션은 파일만 되돌릴 수 없다)
@@ -118,8 +122,8 @@ class RoundTracker:
         self.best: Best | None = None
 
     def record(self, round_no: int, review: Review) -> bool:
-        """이번 라운드를 기록한다. 직전 최고점보다 낮으면 최고점 산출물로 되돌리고 True를 돌려준다."""
-        if self.rollback and self.best is not None and review.score < self.best.review.score:
+        """이번 라운드를 기록한다. 직전 최고 라운드보다 낮으면 그 산출물로 되돌리고 True를 돌려준다."""
+        if self.rollback and self.best is not None and self.rank(review) < self.rank(self.best.review):
             restore(self.paths, self.root, self.best.snapshot_dir)
             return True
         snap = self.snap_root / f"round-{round_no}"

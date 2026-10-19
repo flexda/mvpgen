@@ -57,6 +57,9 @@ def generate(
     db_url = load_supabase_url(secrets)
     # 에이전트 세션은 이 프로세스의 환경을 물려받는다. 셸에서 export한 접속 문자열이 넘어가지 않게 지운다
     os.environ.pop(SUPABASE_URL_KEY, None)
+    # 데이터 모드는 에이전트에게 API 키를 주지 않는다. 셸에 export한 같은 이름의 키도 지운다 (샘플과 적재에는 mvp_env로 넘긴다)
+    for key in mvp_env:
+        os.environ.pop(key, None)
     if not db_url:
         typer.echo(f"{secrets / SUPABASE_FILE}에 {SUPABASE_URL_KEY}가 없다. Supabase 대시보드의 Connect > Session pooler 문자열을 넣어라",
                    err=True)

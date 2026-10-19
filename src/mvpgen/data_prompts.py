@@ -95,7 +95,7 @@ DATA_BUILD_SYSTEM = f"""\
 - 응답 형식은 context/samples/의 실제 응답(mvpgen이 미리 받음)으로 확인하고, fixture도 여기서 만든다.
 - 실제 호출은 자동 검사의 적재 단계에서만 일어난다. 그때 키가 환경변수로 들어가고 page_cap_env로 페이지 수가 제한된다.
   실제 응답이 샘플과 다르면 그 결과가 db/ 아래 근거 파일로 돌아온다.
-- 로컬 테스트용 Postgres를 띄우지 않는다. DB 동작은 자동 검사가 실제 Supabase에서 확인한다.
+- 마이그레이션을 미리 확인하려고 로컬 Postgres를 띄워도 된다. 데이터 폴더는 app/ 밖의 임시 폴더에 두고, 끝나면 서버를 끈다.
 - Python 패키지는 uv로만 설치한다 (pip 금지).
 
 작업을 마치면 자동 검사가 돈다: 마이그레이션 규칙, install, test, supabase db push, 테이블 확인, 적재 2회와 행 수 비교, checks 쿼리.

@@ -71,7 +71,12 @@ class DataPipeline(Pipeline):
         # 데이터 모드는 점수와 상관없이 major 이슈가 남아 있으면 불합격이다 (데이터 손실, 멱등 위반 등)
         return super()._is_accepted(review) and review.major_count == 0
 
+    def _round_rank(self, review: Review) -> tuple:
+        # data-plan은 점수가 떨어지면 되돌린다. major를 고친 라운드를 점수가 조금 낮다고 major가 있는 판으로 되돌리지 않게 한다
+        return (review.major_count + review.critical_count == 0, review.score)
+
     def _open_issues(self, stage: str, review: Review) -> None:
+        # data-build는 rollback=False라 review가 마지막 라운드(DB에 적재된 코드)의 것이다
         info = self._stage(stage)
         info["open_major"] = 0 if info["status"] == "passed" else review.major_count + review.critical_count
         self._save()
@@ -236,6 +241,9 @@ class DataPipeline(Pipeline):
         error: str | None = None
         try:
             await self.plan()
+            if self._stage("data-plan").get("open_major"):
+                # 남은 major가 있으면 실행은 어차피 실패다. Build 비용을 쓰지 않고 멈춘다
+                raise StageFailed("data-plan에 critic의 major 이슈가 남았다. reviews/ 참고")
             self.samples()
             await self.build()
             self.final_verify()

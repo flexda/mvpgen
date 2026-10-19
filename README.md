@@ -215,7 +215,7 @@ data-build 검사 순서 (LLM 없음):
 - 에이전트는 DB 접속 문자열을 받지 않는다. 값은 mvpgen이 실행하는 `db push`와 수집 명령에만 들어가고, 셸에 export한 값도 시작할 때 환경에서 지운다. 보고서와 로그에서는 접속 문자열과 비밀번호를 `***`로 가린다.
 - 에이전트가 접속 문자열이나 비밀번호를 파일, 명령에 쓰면 PreToolUse hook이 막는다.
 - 에이전트 세션(Plan, Build, critic)에는 API 키도 주지 않는다. 실제 API 호출은 API 샘플 단계와 검사의 적재 단계(페이지 제한)에서만 일어나고, 키 값은 hook이 막는 비밀값에 들어간다. 키가 필요 없는 API는 에이전트가 직접 부르는 것을 막지 못한다(프롬프트로만 금지).
-- critic이 major 이슈를 하나라도 남기면 점수와 상관없이 불합격이다. 개정 한도가 지나도 남아 있으면 최종 검증을 통과해도 실행 결과는 실패이고, `run_report.json`의 `open_major`에 남는다. 이 실행에서 고칠 수 없는 것(페이지 제한 때문에 전체 수집을 확인 못 한 것 등)은 major로 두지 않게 critic에 알린다.
+- critic이 major 이슈를 하나라도 남기면 점수와 상관없이 불합격이다. 개정 한도가 지나도 남아 있으면 최종 검증을 통과해도 실행 결과는 실패이고, `run_report.json`의 `open_major`에 남는다. 이 실행에서 고칠 수 없는 것(페이지 제한 때문에 전체 수집을 확인 못 한 것 등)은 major로 두지 않게 critic에 알린다. data-plan에 major가 남으면 Build를 시작하지 않고 멈춘다. data-plan의 라운드 되돌리기는 합격 여부, major 유무, 점수 순으로 비교한다.
 - data-build는 critic 점수가 떨어져도 `app/`을 되돌리지 않는다. 이미 DB에 적용한 마이그레이션을 파일만 되돌리면 DB 기록과 어긋나기 때문이다.
 - 단계별 모델 키는 `data-plan`, `data-build`(fix 포함), `critic`, `data-plan-critic`, `data-build-critic`이다.
 
