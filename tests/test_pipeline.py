@@ -3,7 +3,11 @@ from datetime import datetime
 
 import pytest
 
-from mvpgen.pipeline import find_run_dir, make_slug, model_for, name_slug, parse_stage_models
+from mvpgen.pipeline import STAGE_MODEL_KEYS, find_run_dir, make_slug, model_for, name_slug, parse_stage_models
+
+
+def test_stage_model_keys_follow_stage_table():
+    assert STAGE_MODEL_KEYS == ("plan", "design", "build", "critic", "plan-critic", "design-critic", "build-critic")
 
 
 def test_model_for_resolution():

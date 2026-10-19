@@ -23,12 +23,29 @@ from mvpgen.rubrics import BUILD_RUBRIC, DESIGN_RUBRIC, PLAN_RUBRIC
 from mvpgen.spec import Spec, check_plan, load_spec
 from mvpgen.verify import free_port, verify_app
 
-GEN_TOOLS_PLAN = ["Read", "Write", "Edit", "Glob"]
-GEN_TOOLS_DESIGN = ["Read", "Write", "Edit", "Glob", "Grep"]
-GEN_TOOLS_BUILD = ["Read", "Write", "Edit", "Glob", "Grep", "Bash"]
-CRITIC_TOOLS_PLAN = ["Read", "Glob", "Grep", "Write"]
-CRITIC_TOOLS_DESIGN = ["Read", "Glob", "Grep", "Write"]
-CRITIC_TOOLS_BUILD = ["Read", "Glob", "Grep", "Write", "Bash"]
+@dataclass(frozen=True)
+class Stage:
+    """생성자 + critic 루프를 도는 단계 하나의 고정 설정."""
+
+    name: str
+    label: str  # Stop gate와 검사 메시지에 쓰는 이름
+    gen_tools: tuple[str, ...]
+    critic_tools: tuple[str, ...]
+    rubric: str
+    # critic이 앱을 띄워 볼 포트가 필요한가
+    critic_port: bool = False
+
+
+# 실행 순서대로 둔다. 이 순서가 --stage-model 키와 README 검증 기록의 순서가 된다
+STAGES: dict[str, Stage] = {s.name: s for s in (
+    Stage("plan", "Plan", ("Read", "Write", "Edit", "Glob"), ("Read", "Glob", "Grep", "Write"), PLAN_RUBRIC),
+    Stage("design", "Design", ("Read", "Write", "Edit", "Glob", "Grep"), ("Read", "Glob", "Grep", "Write"), DESIGN_RUBRIC),
+    Stage("build", "Build", ("Read", "Write", "Edit", "Glob", "Grep", "Bash"), ("Read", "Glob", "Grep", "Write", "Bash"),
+          BUILD_RUBRIC, critic_port=True),
+)}
+
+# 이 상태로 끝난 단계는 --resume에서 다시 돌리지 않는다
+DONE_STATUSES = frozenset({"passed", "passed_with_issues"})
 
 
 class BudgetExceeded(RuntimeError):
@@ -39,8 +56,8 @@ class StageFailed(RuntimeError):
     pass
 
 
-# --stage-model에 쓸 수 있는 키. critic은 세 critic 모두에 적용되고, 개별 critic 키가 그보다 우선한다
-STAGE_MODEL_KEYS = ("plan", "design", "build", "critic", "plan-critic", "design-critic", "build-critic")
+# --stage-model에 쓸 수 있는 키. critic은 모든 critic에 적용되고, 개별 critic 키가 그보다 우선한다
+STAGE_MODEL_KEYS = (*STAGES, "critic", *(f"{s}-critic" for s in STAGES))
 
 
 def model_for(stage: str, stage_models: dict[str, str], default: str) -> str:
@@ -184,6 +201,17 @@ class Pipeline:
     def _stage(self, name: str) -> dict[str, Any]:
         return self.state["stages"].setdefault(name, {"status": "pending", "rounds": []})
 
+    def _done(self, name: str, extra: frozenset[str] = frozenset()) -> bool:
+        """이전 실행에서 끝난 단계면 알리고 True를 돌려준다."""
+        status = self._stage(name)["status"]
+        if status not in DONE_STATUSES | extra:
+            return False
+        print(f"{name}: 이전 실행 결과를 사용한다" + (f" ({status})" if extra else ""))
+        return True
+
+    def _gate(self, stage: Stage, check: Callable[[], tuple[bool, str]]) -> StopGate:
+        return StopGate(stage.label, check, self.config.max_gate_blocks)
+
     @property
     def spent(self) -> float:
         return float(self.state["cost_usd"])
@@ -239,16 +267,14 @@ class Pipeline:
     # ---- 생성자 + 비평가 루프 ----
     async def _review_loop(
         self,
+        spec: Stage,
         *,
-        stage: str,
         paths: list[Path],
         generate: Callable[[str | None, int], Any],
         check: Callable[[], tuple[bool, str]],
-        fix: Callable[[str, int, int], Any] | None,
-        rubric: str,
-        critic_tools: list[str],
-        critic_port: bool,
+        fix: Callable[[str, int, int], Any] | None = None,
     ) -> Review:
+        stage = spec.name
         info = self._stage(stage)
         tracker = RoundTracker(paths, self.run_dir, self.run_dir / "snapshots" / stage)
         feedback: str | None = None
@@ -276,15 +302,15 @@ class Pipeline:
             review_path = self.run_dir / review_rel
             review_path.parent.mkdir(exist_ok=True)
             critic_gate = StopGate(f"{stage} review", lambda: check_review_file(review_path), self.config.max_gate_blocks)
-            port = free_port() if critic_port else None
+            port = free_port() if spec.critic_port else None
             await self._agent(
                 stage=f"{stage}-critic",
                 round_no=round_no,
                 system_prompt=prompts.CRITIC_SYSTEM,
-                prompt=prompts.critic_prompt(stage, self.config.idea, rubric, review_rel, port,
+                prompt=prompts.critic_prompt(stage, self.config.idea, spec.rubric, review_rel, port,
                                           has_context=bool(list_context(self.run_dir)),
                                           has_design=(self.run_dir / "DESIGN.md").exists()),
-                tools=critic_tools,
+                tools=list(spec.critic_tools),
                 writable=[review_path],
                 max_turns=self.config.critic_max_turns,
                 gate=critic_gate,
@@ -325,31 +351,28 @@ class Pipeline:
 
     # ---- 단계 ----
     async def plan(self) -> None:
-        if self._stage("plan")["status"] in {"passed", "passed_with_issues"}:
-            print("plan: 이전 실행 결과를 사용한다")
+        stage = STAGES["plan"]
+        if self._done(stage.name):
             return
         system = (prompts.PLAN_SYSTEM + prompts.env_note(sorted(self.config.mvp_env))
-                  + lessons_prompt(self.lessons_path, "plan"))
+                  + lessons_prompt(self.lessons_path, stage.name))
         writable = [self.run_dir / "PRD.md", self.run_dir / "spec.json"]
 
         async def generate(feedback: str | None, round_no: int) -> None:
-            gate = StopGate("Plan", self._plan_check, self.config.max_gate_blocks)
             await self._agent(
-                stage="plan", round_no=round_no, system_prompt=system,
+                stage=stage.name, round_no=round_no, system_prompt=system,
                 prompt=prompts.plan_prompt(self.config.idea, feedback, list_context(self.run_dir)),
-                tools=GEN_TOOLS_PLAN, writable=writable, max_turns=self.config.plan_max_turns, gate=gate,
+                tools=list(stage.gen_tools), writable=writable, max_turns=self.config.plan_max_turns,
+                gate=self._gate(stage, self._plan_check),
             )
 
-        await self._review_loop(
-            stage="plan", paths=writable, generate=generate, check=self._plan_check, fix=None,
-            rubric=PLAN_RUBRIC, critic_tools=CRITIC_TOOLS_PLAN, critic_port=False,
-        )
+        await self._review_loop(stage, paths=writable, generate=generate, check=self._plan_check)
 
     async def design(self) -> None:
-        info = self._stage("design")
-        if info["status"] in {"passed", "passed_with_issues", "provided", "skipped"}:
-            print(f"design: 이전 실행 결과를 사용한다 ({info['status']})")
+        stage = STAGES["design"]
+        if self._done(stage.name, frozenset({"provided", "skipped"})):
             return
+        info = self._stage(stage.name)
         mode = self.config.design
         spec = load_spec(self.run_dir / "spec.json")
         if mode == "off" or spec.smoke.url is None:
@@ -379,53 +402,47 @@ class Pipeline:
         copy_candidates(library, picked["candidates"], self.run_dir)
         print(f"\n== design 후보 (seed {picked['seed']}): {', '.join(picked['candidates'])}", flush=True)
 
-        system = prompts.DESIGN_SYSTEM + lessons_prompt(self.lessons_path, "design")
+        system = prompts.DESIGN_SYSTEM + lessons_prompt(self.lessons_path, stage.name)
         writable = [self.run_dir / "concepts.json", self.run_dir / "DESIGN.md"]
 
         async def generate(feedback: str | None, round_no: int) -> None:
-            gate = StopGate("Design", self._design_check, self.config.max_gate_blocks)
             await self._agent(
-                stage="design", round_no=round_no, system_prompt=system,
+                stage=stage.name, round_no=round_no, system_prompt=system,
                 prompt=prompts.design_prompt(self.config.idea, picked["candidates"], feedback, list_context(self.run_dir)),
-                tools=GEN_TOOLS_DESIGN, writable=writable, max_turns=self.config.design_max_turns, gate=gate,
+                tools=list(stage.gen_tools), writable=writable, max_turns=self.config.design_max_turns,
+                gate=self._gate(stage, self._design_check),
             )
 
-        await self._review_loop(
-            stage="design", paths=writable, generate=generate, check=self._design_check, fix=None,
-            rubric=DESIGN_RUBRIC, critic_tools=CRITIC_TOOLS_DESIGN, critic_port=False,
-        )
+        await self._review_loop(stage, paths=writable, generate=generate, check=self._design_check)
 
     async def build(self) -> None:
-        if self._stage("build")["status"] in {"passed", "passed_with_issues"}:
-            print("build: 이전 실행 결과를 사용한다")
+        stage = STAGES["build"]
+        if self._done(stage.name):
             return
         spec = load_spec(self.run_dir / "spec.json")
         system = (prompts.BUILD_SYSTEM + prompts.env_note(sorted(self.config.mvp_env))
-                  + lessons_prompt(self.lessons_path, "build"))
+                  + lessons_prompt(self.lessons_path, stage.name))
         self.app_dir.mkdir(exist_ok=True)
 
         async def generate(feedback: str | None, round_no: int) -> None:
-            gate = StopGate("Build", self._build_check, self.config.max_gate_blocks)
             await self._agent(
-                stage="build", round_no=round_no, system_prompt=system,
+                stage=stage.name, round_no=round_no, system_prompt=system,
                 prompt=prompts.build_prompt(spec, feedback, list_context(self.run_dir),
                                             has_design=(self.run_dir / "DESIGN.md").exists(),
                                             has_concepts=(self.run_dir / "concepts.json").exists()),
-                tools=GEN_TOOLS_BUILD, writable=[self.app_dir], max_turns=self.config.build_max_turns, gate=gate,
+                tools=list(stage.gen_tools), writable=[self.app_dir], max_turns=self.config.build_max_turns,
+                gate=self._gate(stage, self._build_check),
             )
 
         async def fix(report: str, round_no: int, fix_no: int) -> None:
-            gate = StopGate("Build", self._build_check, self.config.max_gate_blocks)
             await self._agent(
-                stage=f"build-fix{fix_no}", round_no=round_no, system_prompt=system,
+                stage=f"{stage.name}-fix{fix_no}", round_no=round_no, system_prompt=system,
                 prompt=prompts.fix_prompt(report),
-                tools=GEN_TOOLS_BUILD, writable=[self.app_dir], max_turns=self.config.build_max_turns, gate=gate,
+                tools=list(stage.gen_tools), writable=[self.app_dir], max_turns=self.config.build_max_turns,
+                gate=self._gate(stage, self._build_check),
             )
 
-        await self._review_loop(
-            stage="build", paths=[self.app_dir], generate=generate, check=self._build_check, fix=fix,
-            rubric=BUILD_RUBRIC, critic_tools=CRITIC_TOOLS_BUILD, critic_port=True,
-        )
+        await self._review_loop(stage, paths=[self.app_dir], generate=generate, check=self._build_check, fix=fix)
 
     def final_verify(self) -> bool:
         print("\n== 최종 검증 (LLM 없음)", flush=True)
@@ -501,7 +518,7 @@ def _readme(idea: str, spec: Spec | None, stages: dict[str, Any], cost: float, s
         lines += ["export PORT=8000", spec.run_cmd, "```", "", "테스트: `" + spec.test_cmd + "`", "", "## 기능", ""]
         lines += [f"- {f.id} {f.title}: {f.description}" for f in spec.features]
     lines += ["", "## 검증 기록", ""]
-    for name in ("plan", "design", "build"):
+    for name in STAGES:
         st = stages.get(name)
         if st and not st.get("rounds"):
             # design이 skipped나 provided면 critic 라운드가 없다
