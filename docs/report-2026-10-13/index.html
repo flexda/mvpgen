@@ -162,7 +162,7 @@ figcaption { font-size: 0.85rem; color: var(--muted); }
       </div>
       <div class="callout info">
         <strong>한 문단 결론</strong>
-        <p>파이프라인은 끝까지 돌아가고, 인증 없이 키를 쓰지 않는 Actions 실행, 아이디어 의도 대조, 참고 자료 반영까지 실제로 확인했습니다. 그러나 다섯 번의 실행 모두 critic이 첫 라운드에 합격시켰고 Stop hook도 한 번도 막지 않았습니다. 그래서 이 시스템의 핵심인 "스스로 고치는 루프"가 실제로 작동하는지는 아직 증명되지 않았습니다. 동시에 검증 기준 밖의 결함(휴대폰 화면 깨짐)은 사람이 스크린샷을 보고서야 발견했습니다. 다음 시스템의 과제는 루프를 더 돌리는 것이 아니라, 검증이 무엇을 못 보는지를 먼저 측정하는 것입니다.</p>
+        <p>파이프라인은 끝까지 돌아가고, 인증 없이 키를 쓰지 않는 Actions 실행, 아이디어 의도 대조, 참고 자료 반영까지 실제로 확인했습니다. 그러나 다섯 번의 실행 모두 critic이 첫 라운드에 합격시켰고 Stop hook도 한 번도 막지 않았습니다. 그래서 이 시스템의 핵심인 "스스로 고치는 루프"가 실제로 작동하는지는 아직 증명되지 않았습니다. 동시에 검증 기준 밖의 결함(휴대폰 화면 깨짐)은 mvpgen 실행 후 Claude Code가 맥에서 headless Chrome으로 스크린샷을 만들고 열어 보면서 발견했습니다. 다음 시스템의 과제는 루프를 더 돌리는 것이 아니라, 검증이 무엇을 못 보는지를 먼저 측정하는 것입니다.</p>
       </div>
     </section>
 
@@ -386,7 +386,7 @@ flowchart LR
         <li class="issue"><span class="t"></span><div class="b"><h4>참고 자료 요청과 키 발견</h4><p>"오늘 뭐하지" 앱용 조사 자료 폴더의 API 문서에 서비스키 값이 그대로 들어 있었음. 키 확인 명령은 auto mode가 Credential Exploration으로 차단. 사용자가 다른 도구로 키를 옮겼고, 그 도구의 작업 로그에 키 값이 그대로 출력됨. <code>mvp.env</code>가 새로 만들어져 기존 내용이 덮였을 가능성.</p></div></li>
         <li class="issue"><span class="t">12:31</span><div class="b"><h4>--context 구현, 자료 커밋은 차단</h4><p>자료 복사 시 <code>mvp.env</code> 값과 대조하는 검사 추가. 키를 지운 사본의 커밋이 Sensitive-Source Provenance로 차단되어 코드만 커밋. 사용자가 명시적으로 지시한 뒤 자료 커밋 성공(12:51).</p></div></li>
         <li><span class="t"></span><div class="b"><h4>Remote Control</h4><p>사용자가 <code>/remote-control</code>로 휴대폰에서 세션을 조종. 이후 결과 파일과 스크린샷을 세션으로 전송.</p></div></li>
-        <li class="mark"><span class="t">12:51</span><div class="b"><h4>"오늘 뭐하지" 생성 ($1.96, 8.6분)</h4><p>맥에서 앱을 띄워 headless Chrome으로 스크린샷. 휴대폰 폭에서 가로 넘침 발견. 검증 루프 어디에서도 잡히지 않은 결함.</p></div></li>
+        <li class="mark"><span class="t">12:51~13:01</span><div class="b"><h4>"오늘 뭐하지" 생성 ($1.96, 8.6분)</h4><p>mvpgen 실행이 끝난 뒤 Claude Code가 맥에서 앱을 띄워 headless Chrome으로 스크린샷을 만들고 Read 도구로 열어 봄. 13:01에 휴대폰 폭의 가로 넘침을 사용자에게 알림. mvpgen 검증 루프 어디에서도 잡히지 않은 결함.</p></div></li>
         <li class="issue"><span class="t"></span><div class="b"><h4>"새로운 아이디어로 비교" 혼선</h4><p>사용자는 비교가 예전 아이디어로 진행됐다고 기억. 실제로는 새 아이디어(책 기록장)였음을 결과 표로 확인.</p></div></li>
         <li class="issue"><span class="t"></span><div class="b"><h4>workspace/는 왜 git 제외인가</h4><p>이유가 기록되어 있지 않았음. 추정하다가 lessons.md도 그 안에 있어 Actions에서는 매번 비어 있다는 것을 발견. README가 설명하는 세 번째 루프가 CI에서는 작동하지 않고 있었음.</p></div></li>
         <li class="mark"><span class="t">13:32</span><div class="b"><h4>lessons.md 저장소 보관, save-lessons 잡</h4><p>쓰기 권한을 분리한 별도 잡이 최신 main에 병합 커밋. 실행 중 main이 바뀌어도 항목을 잃지 않게 병합 함수 추가.</p></div></li>
@@ -455,7 +455,7 @@ flowchart LR
           <tr><td><code>todo-mvp</code> 오변경</td><td>외부 검토</td><td>접미사 비교로 대체 이름을 판정</td><td><span class="tag ok">수정</span></td></tr>
           <tr><td>문서에 API 키 포함</td><td>자료 확인 중</td><td>자료 작성 시 키와 문서를 분리하지 않음</td><td><span class="tag ok">사본 정리</span> 원본은 그대로</td></tr>
           <tr><td>다른 도구 로그에 키 값 노출</td><td>붙여넣은 작업 로그</td><td>키 이동을 사람이 범용 에이전트에 맡김. 출력 마스킹 없음</td><td><span class="tag warn">재발급 검토</span></td></tr>
-          <tr><td>휴대폰 화면 깨짐</td><td>사람이 스크린샷 확인</td><td>어떤 검증 단계도 브라우저와 화면 폭을 보지 않음</td><td><span class="tag bad">미해결</span></td></tr>
+          <tr><td>휴대폰 화면 깨짐</td><td>mvpgen 실행 후 Claude Code가 스크린샷을 열어 발견</td><td>mvpgen 검증 단계가 브라우저 화면 폭을 보지 않음</td><td><span class="tag bad">미해결</span></td></tr>
           <tr><td>critic, gate가 한 번도 불합격시키지 않음</td><td>실행 리포트 집계</td><td>판정 기준이 느슨하거나, 아이디어가 쉬웠거나, 같은 모델의 자기 평가 편향. 원인 미구분</td><td><span class="tag bad">미해결</span></td></tr>
           <tr><td>같은 minor 지적 반복</td><td>두 실행 review 비교</td><td>lessons가 major 이상만 기록</td><td><span class="tag warn">설계 판단 필요</span></td></tr>
           <tr><td>lessons.md가 CI에서 매번 초기화</td><td>git 제외 이유를 추적하다가</td><td>상태 파일을 일회용 폴더에 둠. CI가 일회용 환경이라는 점을 설계에 반영하지 않음</td><td><span class="tag ok">수정</span> 미실행</td></tr>
