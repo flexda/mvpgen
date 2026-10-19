@@ -54,3 +54,32 @@ def test_check_picks(tmp_path):
     path.write_text(json.dumps({"type": "web", "picks": [*picks, {"url": IOS, "why": "앱"}, {"url": WIRED, "why": "중복"}]}))
     problems = check_picks(path, SOURCES)
     assert any("4번" in p and "app형" in p for p in problems) and any("두 번" in p for p in problems)
+
+
+def test_fetch_verifies_tls_with_certifi(monkeypatch):
+    """python.org 파이썬은 시스템 인증서가 없어 기본 검증이 실패했다(첫 실제 실행). certifi 인증서로 검증하되 검증은 끄지 않는다."""
+    import ssl
+
+    import certifi
+    import urllib.request
+
+    seen = {}
+
+    class Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self, n):
+            return b"# design"
+
+    def fake_urlopen(req, timeout, context):
+        seen["context"] = context
+        return Resp()
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    assert fetch("https://raw.githubusercontent.com/VoltAgent/awesome-design-md/main/design-md/wired/DESIGN.md") == "# design"
+    assert seen["context"].verify_mode == ssl.CERT_REQUIRED and seen["context"].check_hostname
+    assert certifi.where()

@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import json
 import re
+import ssl
 import tomllib
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
+
+import certifi
 
 MAX_DESIGN_BYTES = 300 * 1024
 PICKS_NAME = "design-refs.json"
@@ -86,7 +89,9 @@ def fetch(raw_url: str) -> str:
     if not raw_url.startswith("https://raw.githubusercontent.com/"):
         raise RefError(f"{raw_url}: 받을 수 없는 주소다")
     req = urllib.request.Request(raw_url, headers={"User-Agent": "mvpgen"})
-    with urllib.request.urlopen(req, timeout=FETCH_TIMEOUT_S) as resp:  # noqa: S310 (주소는 위에서 고정 호스트로 검사)
+    # python.org 파이썬은 시스템 인증서를 설치하지 않아 기본 검증이 실패한다. certifi의 인증서로 검증하고, 검증은 끄지 않는다
+    context = ssl.create_default_context(cafile=certifi.where())
+    with urllib.request.urlopen(req, timeout=FETCH_TIMEOUT_S, context=context) as resp:  # noqa: S310 (주소는 위에서 고정 호스트로 검사)
         body = resp.read(MAX_DESIGN_BYTES + 1)
     if len(body) > MAX_DESIGN_BYTES:
         raise RefError(f"{raw_url}: {MAX_DESIGN_BYTES // 1024}KB보다 크다")
