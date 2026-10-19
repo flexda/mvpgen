@@ -16,3 +16,6 @@ secrets/*
 !secrets/README.md
 
 .DS_Store
+
+# playwright-cli가 남기는 페이지 기록과 콘솔 로그
+.playwright-cli/
