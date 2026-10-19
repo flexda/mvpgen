@@ -15,7 +15,10 @@ DATA_SPEC_EXAMPLE = {
     "name": "air-quality-daily",
     "summary": "대기질 측정 API를 받아 측정소별 일 평균을 적재한다",
     "source": {"name": "대기질 측정 API", "endpoint": "https://api.example.go.kr/air/measure",
-               "key_env": "AIR_API_KEY", "doc": "context/air-api.md"},
+               "key_env": "AIR_API_KEY", "doc": "context/air-api.md",
+               "sample": {"url": "https://api.example.go.kr/air/measure",
+                          "params": {"serviceKey": "{key}", "pageNo": "{page}", "numOfRows": "100", "returnType": "json"},
+                          "headers": {}, "pages": 2}},
     "intent": [
         {"requirement": "측정값을 매일 모은다", "covered_by": ["raw.air_pages", "core.measurement"]},
         {"requirement": "측정소별 일 평균을 본다", "covered_by": ["mart.station_daily", "daily_unique"]},
@@ -57,6 +60,9 @@ DATA_PLAN_SYSTEM = f"""\
   형식만 갖춘 검사(항상 0행)가 아니라 이 데이터에서 실제로 깨질 수 있는 규칙을 고른다.
 - intent에는 목표 원문이 요구한 것을 빠짐없이 나눠 적고, 각각을 해결하는 테이블 이름이나 check id를 covered_by에 연결한다.
 - source.doc에는 참고한 context/ 안 문서 경로를, source.key_env에는 '준비된 환경변수' 중 이 API의 키 이름을 쓴다.
+- source.sample은 mvpgen이 Build 전에 대신 보낼 샘플 요청이다. 자료에 있는 그대로 url, params, headers를 쓰고,
+  키 자리에는 {{key}}, 페이지 번호 자리에는 {{page}}를 쓴다(값은 mvpgen이 채운다). pages는 1-3이다.
+  한 페이지 응답이 2MB를 넘지 않게 페이지 크기를 고른다. 응답은 context/samples/에 저장되어 Build의 fixture가 된다.
 - 구현은 Python 3.13, uv, psycopg 3을 쓴다 (pip 금지). 명령은 app/ 디렉토리 기준이다.
 - ingest_cmd는 환경변수 DATABASE_URL로 DB에 붙고, page_cap_env 환경변수의 값(0이면 전체)만큼만 페이지를 받는다.
 - test_cmd는 네트워크와 DB 없이 통과해야 한다 (API 응답은 fixture로, DB 쓰기는 SQL 생성 함수나 가짜 연결로 검사).
@@ -83,11 +89,27 @@ DATA_BUILD_SYSTEM = f"""\
 - 멱등이어야 한다. 같은 데이터로 두 번 실행해도 idempotent 테이블의 행 수가 바뀌지 않게 자연키로 upsert한다.
 - page_cap_env 환경변수가 0보다 크면 그 페이지 수까지만 받는다. 요청마다 timeout을 두고, 실패는 숨기지 말고 종료 코드로 알린다.
 - API 키는 환경변수 이름으로만 읽는다. 값을 코드, 파일, 명령에 직접 쓰지 않는다. 필요한 이름은 app/.env.example에 값 없이 적는다.
+
+실제 API 호출:
+- 너의 세션에는 API 키가 없다. 실제 API를 직접 부르지 않는다. 키가 필요 없는 API여도 부르지 않는다.
+- 응답 형식은 context/samples/의 실제 응답(mvpgen이 미리 받음)으로 확인하고, fixture도 여기서 만든다.
+- 실제 호출은 자동 검사의 적재 단계에서만 일어난다. 그때 키가 환경변수로 들어가고 page_cap_env로 페이지 수가 제한된다.
+  실제 응답이 샘플과 다르면 그 결과가 db/ 아래 근거 파일로 돌아온다.
+- 로컬 테스트용 Postgres를 띄우지 않는다. DB 동작은 자동 검사가 실제 Supabase에서 확인한다.
 - Python 패키지는 uv로만 설치한다 (pip 금지).
 
 작업을 마치면 자동 검사가 돈다: 마이그레이션 규칙, install, test, supabase db push, 테이블 확인, 적재 2회와 행 수 비교, checks 쿼리.
 결과는 db/ 아래 .md 파일에 남고, 실패하면 내용이 전달된다. 고쳐서 다시 마친다.
 """
+
+
+def env_note(keys: list[str]) -> str:
+    if not keys:
+        return "\n\n# 준비된 환경변수\n없음. 키가 필요한 API는 쓰지 않는다."
+    return (
+        "\n\n# 준비된 환경변수\n" + ", ".join(keys)
+        + "\n자동 검사의 적재 단계에서만 이 이름으로 값이 들어간다. 너의 세션에는 값이 없고, 알아내려고 하지 않는다."
+    )
 
 
 def context_note(files: list[str], stage: str) -> str:
@@ -100,11 +122,12 @@ def context_note(files: list[str], stage: str) -> str:
     if stage == "data-plan":
         note += (
             "작성 전에 모두 읽어라. 엔드포인트, 파라미터, 응답 필드는 자료에 있는 그대로 쓴다. 자료에 없는 필드나 필터를 가정하지 않는다.\n"
-            "이 단계에서는 API를 직접 부를 수 없다. 자료로 확인할 수 없는 점(응답 형식, 페이지 크기 한도 등)은 PIPELINE.md에 '미확인'으로 적고,\n"
-            "Build 단계가 실제 응답으로 확인하게 한다."
+            "이 단계에서는 API를 직접 부를 수 없다. 자료로 확인할 수 없는 점(응답 형식, 페이지 크기 한도 등)은 PIPELINE.md에 '미확인'으로 적는다.\n"
+            "Plan이 끝나면 mvpgen이 source.sample대로 실제 응답을 받아 Build에 넘긴다."
         )
     else:
-        note += "자료의 엔드포인트와 필드를 따른다. 실제 응답 형식이 자료와 다르면 실제 응답을 따르고 app/README.md에 차이를 적는다."
+        note += ("자료의 엔드포인트와 필드를 따른다. context/samples/는 mvpgen이 받아 둔 실제 응답이다."
+                 " 샘플이 자료와 다르면 샘플을 따르고 app/README.md에 차이를 적는다.")
     return note
 
 
@@ -138,11 +161,13 @@ def fix_prompt(report: str) -> str:
 
 def critic_prompt(stage: str, goal: str, rubric: str, review_path: str, has_context: bool, evidence: str | None) -> str:
     target = "PIPELINE.md와 pipeline.json" if stage == "data-plan" else "pipeline.json의 설계에 비춘 app/ 구현"
-    prompt = f"원래 목표: {goal}\n\n평가 대상: {target}\n\n루브릭:\n{rubric}\n평가 결과를 {review_path}에 작성하라."
+    prompt = (f"원래 목표: {goal}\n\n평가 대상: {target}\n\n루브릭:\n{rubric}\n{SEVERITY_RULE}\n"
+              f"평가 결과를 {review_path}에 작성하라.")
     if has_context:
         prompt += (
             "\n\n사용자가 넘긴 API 자료가 context/에 있다. 함께 읽고, 결과물이 자료의 엔드포인트와 실제 필드를 따르는지,"
             " 자료에 없는 필드나 필터를 가정하지 않았는지 확인하라. 이 파이프라인은 실행 중에 API를 부르는 것이 정상이다."
+            " 너에게는 API 키가 없으니 실제 API를 부르지 않는다. context/samples/가 있으면 실제 응답으로 쓴다."
         )
     if stage == "data-build":
         prompt += (
@@ -153,8 +178,18 @@ def critic_prompt(stage: str, goal: str, rubric: str, review_path: str, has_cont
     return prompt
 
 
+SEVERITY_RULE = """\
+심각도 규칙 (이 모드에서는 major가 하나라도 남으면 점수와 상관없이 불합격이다. pass도 그에 맞춰 쓴다):
+- critical: 목표의 요구를 해결하지 못한다.
+- major: 이 실행 안에서 고칠 수 있고, 그대로 두면 core나 mart의 데이터가 틀리거나 사라지는 문제
+  (다른 엔터티를 합치거나 실제 데이터를 근거 없이 버림), 멱등이 깨지는 문제, 마이그레이션 규칙 위반, 실패를 삼키는 수집.
+- minor: 그 밖의 개선점. 그리고 이 실행에서 고칠 수 없는 것은 major로 두지 않는다.
+  예: 자동 검사가 페이지 수를 제한해서 전체 수집이 실제 DB에서 확인되지 않은 것, 사용자가 해야 할 설정, API 자체의 한계.
+"""
+
 DATA_PLAN_RUBRIC = """\
 1. 원천 충실도: 엔드포인트, 파라미터, 응답 필드가 context/ 자료와 맞는가. 자료에 없는 필드나 필터(예: 날짜 조건)를 가정했으면 major다.
+   source.sample이 자료대로의 요청이고 키와 페이지 자리에 {key}, {page}를 썼는가.
 2. 계층 모델: raw(원문), core(정제 엔터티), mart(조회용)의 역할이 나뉘고, core의 자연키가 데이터로 정당화되는가.
 3. 멱등 설계: 같은 데이터를 다시 적재해도 중복이 생기지 않는 키와 upsert 방법, first_seen_at/last_seen_at, 원본 중복 판단이 있는가.
    idempotent 표시가 테이블의 실제 성격과 맞는가.

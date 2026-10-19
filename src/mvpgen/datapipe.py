@@ -14,6 +14,8 @@ from typing import Any
 
 from mvpgen import data_prompts
 from mvpgen.context import list_context
+from mvpgen.critic import Review
+from mvpgen.datasample import SampleResult, fetch_samples
 from mvpgen.dataspec import DataSpec, check_data_plan, load_data_spec
 from mvpgen.gates import StopGate
 from mvpgen.lessons import lessons_prompt
@@ -28,7 +30,6 @@ from mvpgen.pipeline import (
     RunConfig,
     StageFailed,
 )
-from mvpgen.prompts import env_note
 from mvpgen.verify import VerifyResult
 
 # 지문 계산에서 뺄 폴더 (설치와 테스트가 만드는 파일)
@@ -36,13 +37,20 @@ FINGERPRINT_SKIP = {".venv", "__pycache__", ".pytest_cache", "node_modules", ".r
 
 # (app_dir, spec, run_dir, label, page_cap) -> VerifyResult. 실제로는 DbVerifier.verify
 Verifier = Callable[[Path, DataSpec, Path, str, "int | None"], VerifyResult]
+# (spec, run_dir, env) -> SampleResult. 실제로는 datasample.fetch_samples
+Sampler = Callable[[DataSpec, Path, dict[str, str]], SampleResult]
+REVIEW_STAGES = ("data-plan", "data-build")
 
 
 class DataPipeline(Pipeline):
     def __init__(self, config: RunConfig, run_dir: Path, verifier: Verifier,
-                 check_pages: int = 2, final_pages: int | None = None) -> None:
+                 check_pages: int = 2, final_pages: int | None = None, sampler: Sampler = fetch_samples) -> None:
         super().__init__(config, run_dir)
         self.verifier = verifier
+        self.sampler = sampler
+        # 에이전트 세션에는 API 키를 주지 않는다(_agent_env). 그래도 값이 파일이나 명령에 쓰이면 가드가 막게 한다
+        self.config.extra_secrets = [*self.config.extra_secrets,
+                                     *(v for v in config.mvp_env.values() if v not in self.config.extra_secrets)]
         # 검사마다 적재를 두 번 하므로 API 호출을 줄이려고 페이지 수를 제한한다. 최종 검증만 final_pages(None이면 전체)로 돈다
         self.check_pages = check_pages
         self.final_pages = final_pages
@@ -53,6 +61,20 @@ class DataPipeline(Pipeline):
     @property
     def spec_path(self) -> Path:
         return self.run_dir / "pipeline.json"
+
+    def _agent_env(self) -> dict[str, str]:
+        # 키가 있으면 에이전트가 자기 셸로 페이지 제한 없이 실제 API를 부른다(첫 실행에서 전체 수집을 여러 번 했다).
+        # 응답 형식은 Build 전에 받아 둔 context/samples/로 보게 한다
+        return {}
+
+    def _is_accepted(self, review: Review) -> bool:
+        # 데이터 모드는 점수와 상관없이 major 이슈가 남아 있으면 불합격이다 (데이터 손실, 멱등 위반 등)
+        return super()._is_accepted(review) and review.major_count == 0
+
+    def _open_issues(self, stage: str, review: Review) -> None:
+        info = self._stage(stage)
+        info["open_major"] = 0 if info["status"] == "passed" else review.major_count + review.critical_count
+        self._save()
 
     # ---- 검사기 ----
     def _plan_check(self) -> tuple[bool, str]:
@@ -95,7 +117,7 @@ class DataPipeline(Pipeline):
         if self._stage("data-plan")["status"] in {"passed", "passed_with_issues"}:
             print("data-plan: 이전 실행 결과를 사용한다")
             return
-        system = (data_prompts.DATA_PLAN_SYSTEM + env_note(sorted(self.config.mvp_env))
+        system = (data_prompts.DATA_PLAN_SYSTEM + data_prompts.env_note(sorted(self.config.mvp_env))
                   + lessons_prompt(self.lessons_path, "data-plan"))
         writable = [self.run_dir / "PIPELINE.md", self.spec_path]
 
@@ -107,17 +129,32 @@ class DataPipeline(Pipeline):
                 tools=GEN_TOOLS_PLAN, writable=writable, max_turns=self.config.plan_max_turns, gate=gate,
             )
 
-        await self._review_loop(
+        review = await self._review_loop(
             stage="data-plan", paths=writable, generate=generate, check=self._plan_check, fix=None,
             rubric=data_prompts.DATA_PLAN_RUBRIC, critic_tools=CRITIC_TOOLS_PLAN, critic_port=False,
         )
+        self._open_issues("data-plan", review)
+
+    def samples(self) -> None:
+        """Build 전에 원천 API 샘플을 받는다. 에이전트가 부르지 않으므로 호출 수가 정해진다."""
+        spec = load_data_spec(self.spec_path)
+        print(f"\n== API 샘플 (LLM 없음, 최대 {spec.source.sample.pages}페이지)", flush=True)
+        result = self.sampler(spec, self.run_dir, self.config.mvp_env)
+        calls = self.state.setdefault("api_calls", {})
+        calls["samples"] = calls.get("samples", 0) + result.calls
+        self.state["stages"]["samples"] = {"status": "passed" if result.ok else "failed", "message": result.message,
+                                           "files": result.files}
+        self._save()
+        print(f"  {result.message}", flush=True)
+        if not result.ok:
+            raise StageFailed(f"API 샘플을 받지 못했다: {result.message}")
 
     async def build(self) -> None:
         if self._stage("data-build")["status"] in {"passed", "passed_with_issues"}:
             print("data-build: 이전 실행 결과를 사용한다")
             return
         spec = load_data_spec(self.spec_path)
-        system = (data_prompts.DATA_BUILD_SYSTEM + env_note(sorted(self.config.mvp_env))
+        system = (data_prompts.DATA_BUILD_SYSTEM + data_prompts.env_note(sorted(self.config.mvp_env))
                   + lessons_prompt(self.lessons_path, "data-build"))
         self.app_dir.mkdir(exist_ok=True)
 
@@ -139,10 +176,11 @@ class DataPipeline(Pipeline):
             )
 
         # 이미 DB에 적용한 마이그레이션을 파일만 되돌리면 DB 기록과 어긋나므로 점수가 떨어져도 되돌리지 않는다
-        await self._review_loop(
+        review = await self._review_loop(
             stage="data-build", paths=[self.app_dir], generate=generate, check=self._build_check, fix=fix,
             rubric=data_prompts.DATA_BUILD_RUBRIC, critic_tools=CRITIC_TOOLS_BUILD, critic_port=False, rollback=False,
         )
+        self._open_issues("data-build", review)
 
     def final_verify(self) -> bool:
         print(f"\n== 최종 검증 (LLM 없음, 수집 페이지 {self.final_pages or '전체'})", flush=True)
@@ -165,7 +203,9 @@ class DataPipeline(Pipeline):
             except Exception:
                 spec = None
         stages = self.state["stages"]
-        success = stages.get("verify", {}).get("status") == "passed" and error is None
+        open_major = {s: stages[s]["open_major"] for s in REVIEW_STAGES if stages.get(s, {}).get("open_major")}
+        # 최종 검증을 통과해도 critic의 major 이슈가 남아 있으면 성공으로 보지 않는다
+        success = stages.get("verify", {}).get("status") == "passed" and error is None and not open_major
         report: dict[str, Any] = {
             "mode": "data",
             "goal": self.config.idea,
@@ -178,6 +218,8 @@ class DataPipeline(Pipeline):
             "check_pages": self.check_pages,
             "final_pages": self.final_pages,
             "db_checks": self.state.get("db_checks", 0),
+            "api_calls": self.state.get("api_calls", {}),
+            "open_major": open_major,
             "cost_usd": round(self.spent, 4),
             "cost_note": "SDK가 계산한 클라이언트 측 추정치",
             "stages": stages,
@@ -186,7 +228,7 @@ class DataPipeline(Pipeline):
         }
         report_path = self.run_dir / "run_report.json"
         report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-        (self.run_dir / "README.md").write_text(_readme(self.config.idea, spec, stages, self.spent, success, error),
+        (self.run_dir / "README.md").write_text(_readme(self.config.idea, spec, stages, self.spent, success, error, open_major),
                                                 encoding="utf-8")
         return report_path
 
@@ -194,6 +236,7 @@ class DataPipeline(Pipeline):
         error: str | None = None
         try:
             await self.plan()
+            self.samples()
             await self.build()
             self.final_verify()
         except (BudgetExceeded, StageFailed, AgentAborted) as e:
@@ -205,11 +248,15 @@ class DataPipeline(Pipeline):
         return ok
 
 
-def _readme(goal: str, spec: DataSpec | None, stages: dict[str, Any], cost: float, success: bool, error: str | None) -> str:
+def _readme(goal: str, spec: DataSpec | None, stages: dict[str, Any], cost: float, success: bool, error: str | None,
+            open_major: dict[str, int]) -> str:
     lines = [f"# {spec.name if spec else '데이터 파이프라인'}", "", f"목표: {goal}", ""]
     lines.append(f"결과: {'성공' if success else '실패'} (비용 추정 ${cost:.2f})")
     if error:
         lines += ["", f"중단 사유: {error}"]
+    if open_major:
+        lines += ["", "실패 사유: critic의 major 이슈가 남았다 ("
+                  + ", ".join(f"{s} {n}개" for s, n in open_major.items()) + "). reviews/ 참고"]
     if spec:
         lines += ["", "## 요약", "", spec.summary, "", f"원천: {spec.source.name} ({spec.source.endpoint})",
                   "", "## 실행", "", "```bash", "cd app"]
@@ -230,5 +277,7 @@ def _readme(goal: str, spec: DataSpec | None, stages: dict[str, Any], cost: floa
             lines.append(f"- {name}: {st['status']} ({scores})")
     if "verify" in stages:
         lines.append(f"- 최종 검증: {stages['verify']['status']} (근거 db/final.md)")
+    if "samples" in stages:
+        lines.append(f"- API 샘플: {stages['samples']['message']}")
     lines += ["", "세부 내용은 run_report.json, reviews/, db/, logs/ 참고.", ""]
     return "\n".join(lines)

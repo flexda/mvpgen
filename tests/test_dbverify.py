@@ -91,8 +91,8 @@ def make_verifier(db):
 def spec(**over) -> DataSpec:
     s = copy.deepcopy(DATA_SPEC_EXAMPLE)
     # 테스트에는 DB URL이 없어야 하고, 적재에는 URL과 페이지 제한이 넘어가야 한다
-    s.update(install_cmd=None, test_cmd='test -z "$DATABASE_URL"',
-             ingest_cmd='test -n "$DATABASE_URL" && test "$INGEST_MAX_PAGES" = 2 && test -n "$AIR_API_KEY"', **over)
+    s.update({"install_cmd": None, "test_cmd": 'test -z "$DATABASE_URL"',
+              "ingest_cmd": 'test -n "$DATABASE_URL" && test "$INGEST_MAX_PAGES" = 2 && test -n "$AIR_API_KEY"', **over})
     return DataSpec.model_validate(s)
 
 
@@ -172,3 +172,11 @@ def test_preflight_masks_connection_error(tmp_path):
 
     problems = make_verifier(Down([])).preflight(tmp_path)
     assert "접속하지 못했다" in problems[0] and "s3cr" not in problems[0]
+
+
+def test_install_and_test_get_no_api_key(tmp_path):
+    app = make_app(tmp_path, {"20261019000000_init.sql": "create schema if not exists raw;"})
+    db = FakeDb([[0, 0, 0], [5, 5, 2], [5, 5, 2]])
+    s = spec(install_cmd='test -z "$AIR_API_KEY"', test_cmd='test -z "$AIR_API_KEY" && test -z "$DATABASE_URL"')
+    result = make_verifier(db).verify(app, s, tmp_path, "c", 2)
+    assert result.ok, result.report()

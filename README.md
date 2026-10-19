@@ -194,14 +194,15 @@ uv run mvpdata --resume data-20261019-150000-mmca
 
 | 단계 | 산출물 | 자동 검사 (Stop gate) |
 | --- | --- | --- |
-| data-plan | `PIPELINE.md`, `pipeline.json` (원천, raw/core/mart 테이블, 품질 검사 SQL, 명령) | 스키마, 필수 제목, 키 이름, 참고 문서 경로 |
+| data-plan | `PIPELINE.md`, `pipeline.json` (원천과 샘플 요청, raw/core/mart 테이블, 품질 검사 SQL, 명령) | 스키마, 필수 제목, 키 이름, 참고 문서 경로, 샘플 요청의 `{key}` |
+| API 샘플 | `context/samples/page-<n>.<xml/json>`, `README.md` | LLM 없음. `source.sample`대로 1-3페이지를 받고 키를 `***`로 가린다. 이어하기에서는 다시 받지 않는다 |
 | data-build | `app/supabase/migrations/*.sql`, 수집 코드, 테스트 | 아래 순서 |
 | 최종 검증 | `db/final.md` | data-build와 같은 검사를 `--final-pages`(0이면 전체)로 |
 
 data-build 검사 순서 (LLM 없음):
 
 1. 마이그레이션 규칙: 이름 `<14자리 시각>_<이름>.sql`, 이미 적용한 파일은 고치거나 지우지 않음, 새 파일은 마지막 적용 파일보다 늦은 시각, 스키마는 raw, core, mart만, `drop schema`와 Supabase 관리 스키마(public, auth, storage 등) 금지.
-2. install, test: DB 접속 문자열 없이 돈다.
+2. install, test: DB 접속 문자열과 API 키 없이 돈다.
 3. `supabase db push --db-url`: 적용하지 않은 파일만 적용한다. 적용 기록은 DB의 `supabase_migrations.schema_migrations`에 남고, mvpgen은 적용된 파일의 sha256을 `db/ledger.json`에 잠근다.
 4. pipeline.json의 테이블이 모두 있는지 확인.
 5. 수집을 두 번 실행(`DATABASE_URL`, 페이지 제한 `--check-pages`)하고, `idempotent` 테이블의 행 수가 같은지 확인.
@@ -213,6 +214,8 @@ data-build 검사 순서 (LLM 없음):
 
 - 에이전트는 DB 접속 문자열을 받지 않는다. 값은 mvpgen이 실행하는 `db push`와 수집 명령에만 들어가고, 셸에 export한 값도 시작할 때 환경에서 지운다. 보고서와 로그에서는 접속 문자열과 비밀번호를 `***`로 가린다.
 - 에이전트가 접속 문자열이나 비밀번호를 파일, 명령에 쓰면 PreToolUse hook이 막는다.
+- 에이전트 세션(Plan, Build, critic)에는 API 키도 주지 않는다. 실제 API 호출은 API 샘플 단계와 검사의 적재 단계(페이지 제한)에서만 일어나고, 키 값은 hook이 막는 비밀값에 들어간다. 키가 필요 없는 API는 에이전트가 직접 부르는 것을 막지 못한다(프롬프트로만 금지).
+- critic이 major 이슈를 하나라도 남기면 점수와 상관없이 불합격이다. 개정 한도가 지나도 남아 있으면 최종 검증을 통과해도 실행 결과는 실패이고, `run_report.json`의 `open_major`에 남는다. 이 실행에서 고칠 수 없는 것(페이지 제한 때문에 전체 수집을 확인 못 한 것 등)은 major로 두지 않게 critic에 알린다.
 - data-build는 critic 점수가 떨어져도 `app/`을 되돌리지 않는다. 이미 DB에 적용한 마이그레이션을 파일만 되돌리면 DB 기록과 어긋나기 때문이다.
 - 단계별 모델 키는 `data-plan`, `data-build`(fix 포함), `critic`, `data-plan-critic`, `data-build-critic`이다.
 

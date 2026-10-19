@@ -55,3 +55,18 @@ def test_check_data_plan_reports_missing_key_and_doc(tmp_path):
 def test_check_data_plan_missing_files(tmp_path):
     problems = check_data_plan(tmp_path, [])
     assert "pipeline.json이 없다" in problems and "PIPELINE.md가 없다" in problems
+
+
+def test_sample_must_match_key_env():
+    s = example()
+    s["source"]["sample"]["params"]["serviceKey"] = "fixed"
+    with pytest.raises(ValidationError, match="\\{key\\}"):
+        DataSpec.model_validate(s)
+    s = example()
+    s["source"]["key_env"] = None
+    with pytest.raises(ValidationError, match="key_env가 없는데"):
+        DataSpec.model_validate(s)
+    s = example()
+    s["source"]["sample"]["params"]["date"] = "{today}"
+    with pytest.raises(ValidationError, match="today"):
+        DataSpec.model_validate(s)

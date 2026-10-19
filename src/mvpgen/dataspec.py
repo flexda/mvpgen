@@ -16,12 +16,48 @@ _TABLE_NAME = re.compile(r"^(raw|core|mart)\.[a-z_][a-z0-9_]*$")
 _ENV_NAME = re.compile(r"^[A-Z_][A-Z0-9_]*$")
 
 
+_PLACEHOLDER = re.compile(r"\{([a-z_]+)\}")
+SAMPLE_PLACEHOLDERS = {"key", "page"}
+
+
+class SampleRequest(BaseModel):
+    """오케스트레이터가 Build 전에 대신 받아 둘 샘플 요청. 값의 {key}는 API 키로, {page}는 페이지 번호로 바뀐다."""
+
+    url: str = Field(..., pattern=r"^https?://")
+    params: dict[str, str] = Field(default_factory=dict)
+    headers: dict[str, str] = Field(default_factory=dict)
+    pages: int = Field(2, ge=1, le=3)
+
+    def texts(self) -> list[str]:
+        return [self.url, *self.params.values(), *self.headers.values()]
+
+    @property
+    def uses_key(self) -> bool:
+        return any("{key}" in s for s in self.texts())
+
+    @model_validator(mode="after")
+    def _placeholders(self) -> SampleRequest:
+        unknown = {m for s in self.texts() for m in _PLACEHOLDER.findall(s)} - SAMPLE_PLACEHOLDERS
+        if unknown:
+            raise ValueError(f"sample에 알 수 없는 자리표시자가 있다: {sorted(unknown)}. {{key}}, {{page}}만 쓴다")
+        return self
+
+
 class Source(BaseModel):
     name: str = Field(..., min_length=1)
     endpoint: str = Field(..., min_length=1)
     # 키가 필요 없는 API면 null
     key_env: str | None = None
     doc: str = Field(..., min_length=1, description="참고한 context/ 안 문서 경로")
+    sample: SampleRequest
+
+    @model_validator(mode="after")
+    def _sample_key(self) -> Source:
+        if self.key_env and not self.sample.uses_key:
+            raise ValueError("key_env가 있으면 sample의 url, params, headers 중 하나에 {key}를 넣어야 한다")
+        if not self.key_env and self.sample.uses_key:
+            raise ValueError("key_env가 없는데 sample에 {key}가 있다")
+        return self
 
 
 class Table(BaseModel):

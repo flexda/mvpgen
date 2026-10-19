@@ -258,8 +258,9 @@ class DbVerifier:
         if problems:
             return
 
-        # 설치와 테스트에는 DB 접속 문자열을 주지 않는다. 테스트는 네트워크와 DB 없이 통과해야 한다
-        offline = {**app_env(self.extra_env), "CI": "1"}
+        # 설치와 테스트에는 DB 접속 문자열도 API 키도 주지 않는다. 테스트는 네트워크와 DB 없이 통과해야 하고,
+        # 키가 있으면 페이지 제한 없이 실제 API를 부를 수 있다. 키는 적재 단계에만 넘긴다
+        offline = {**app_env({}), "CI": "1"}
         if spec.install_cmd:
             result.steps.append(self._masked(run_step("install", spec.install_cmd, app_dir, 900, offline)))
             if not result.steps[-1].ok:

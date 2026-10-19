@@ -33,6 +33,10 @@ class Review(BaseModel):
     def critical_count(self) -> int:
         return sum(1 for i in self.issues if i.severity == "critical")
 
+    @property
+    def major_count(self) -> int:
+        return sum(1 for i in self.issues if i.severity == "major")
+
     def feedback(self) -> str:
         if not self.issues:
             return self.summary

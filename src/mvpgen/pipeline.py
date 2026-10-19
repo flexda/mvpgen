@@ -205,6 +205,13 @@ class Pipeline:
         gate = f", gate block {run.gate['blocks']}회" if run.gate else ""
         print(f"  <- {run.stage} {status} ({model}): ${run.cost_usd:.3f}, {run.turns}턴{gate}, 누적 ${self.spent:.2f}", flush=True)
 
+    def _agent_env(self) -> dict[str, str]:
+        """에이전트 세션에 넘길 환경변수. 앱 모드는 생성할 앱이 쓸 키(mvp_env)를 넘긴다."""
+        return self.config.mvp_env
+
+    def _is_accepted(self, review: Review) -> bool:
+        return is_accepted(review, self.config.pass_threshold)
+
     async def _agent(self, *, stage: str, round_no: int, **kwargs: Any) -> AgentRun:
         model = model_for(stage, self.config.stage_models, self.config.model)
         run = await run_agent(
@@ -214,7 +221,7 @@ class Pipeline:
             effort=self.config.effort,
             max_budget_usd=self._remaining(),
             log_path=self.run_dir / "logs" / f"{stage}-r{round_no}.log",
-            env=self.config.mvp_env,
+            env=self._agent_env(),
             protected=self.config.protected_paths,
             extra_secrets=self.config.extra_secrets,
             **kwargs,
@@ -296,7 +303,7 @@ class Pipeline:
             if not ok_file:
                 raise StageFailed(f"{stage} critic이 유효한 review를 남기지 못했다: {msg}")
             review = load_review(review_path)
-            accepted = is_accepted(review, self.config.pass_threshold)
+            accepted = self._is_accepted(review)
             rolled_back = tracker.record(round_no, review)
             added = record_lessons(self.lessons_path, stage, review.issues)
             info["rounds"].append({
