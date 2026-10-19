@@ -3,11 +3,19 @@ from datetime import datetime
 
 import pytest
 
-from mvpgen.pipeline import STAGE_MODEL_KEYS, find_run_dir, make_slug, model_for, name_slug, parse_stage_models
+from mvpgen.pipeline import (STAGE_MODEL_KEYS, find_run_dir, make_slug, model_for, name_slug, parse_stage_models,
+                             resolve_settings)
 
 
 def test_stage_model_keys_follow_stage_table():
     assert STAGE_MODEL_KEYS == ("plan", "design", "build", "critic", "plan-critic", "design-critic", "build-critic")
+
+
+def test_resolve_settings_reads_legacy_state_and_defaults():
+    legacy = {"model": "m0", "stage_models": {"plan": "p"}}
+    got = resolve_settings({"model": None, "stage_models": {}, "effort": None, "budget_usd": None, "design": None}, legacy)
+    assert got == {"model": "m0", "stage_models": {"plan": "p"}, "effort": "high", "budget_usd": 10.0, "design": "auto"}
+    assert resolve_settings({"effort": "low"}, None)["effort"] == "low"
 
 
 def test_model_for_resolution():
@@ -18,6 +26,7 @@ def test_model_for_resolution():
     assert model_for("plan-critic", m, "d") == "c"
     assert model_for("design-critic", m, "d") == "dc"
     assert model_for("build-critic", {}, "d") == "d"
+    assert model_for("design-directions", {"design": "x"}, "d") == "x"
 
 
 def test_parse_stage_models():

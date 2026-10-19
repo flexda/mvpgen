@@ -1,6 +1,9 @@
 import json
 
-from mvpgen.design import DESIGN_HEADINGS, check_design, copy_candidates, list_library, pick_candidates
+import pytest
+
+from mvpgen.design import (DESIGN_HEADINGS, check_design, check_directions, choose_direction, copy_candidates,
+                           list_library, pick_candidates)
 
 CANDIDATES = ["airbnb", "nintendo-2001", "spacex"]
 
@@ -59,9 +62,35 @@ def test_check_design_passes(tmp_path):
     assert check_design(tmp_path, CANDIDATES) == []
 
 
-def test_check_design_rejects_baseline_choice(tmp_path):
+def test_check_design_accepts_baseline_choice(tmp_path):
+    # 사람이 고르므로 기준안도 된다
     write_run(tmp_path, good_concepts(chosen="A"), good_design_md())
-    assert any("기준안" in p for p in check_design(tmp_path, CANDIDATES))
+    assert check_design(tmp_path, CANDIDATES) == []
+
+
+def test_check_directions_does_not_need_choice(tmp_path):
+    concepts = good_concepts()
+    del concepts["chosen"], concepts["reason"]
+    write_run(tmp_path, concepts, "")
+    assert check_directions(tmp_path / "concepts.json", CANDIDATES) == []
+    assert any("chosen" in p for p in check_design(tmp_path, CANDIDATES))
+
+
+def test_check_directions_rejects_duplicate_ids(tmp_path):
+    concepts = good_concepts()
+    concepts["directions"][2]["id"] = "B"
+    write_run(tmp_path, concepts, "")
+    assert any("서로 달라야" in p for p in check_directions(tmp_path / "concepts.json", CANDIDATES))
+
+
+def test_choose_direction_records_human_choice(tmp_path):
+    write_run(tmp_path, {"directions": good_concepts()["directions"]}, "")
+    path = tmp_path / "concepts.json"
+    assert choose_direction(path, "A", "무난한 게 낫다")["kind"] == "baseline"
+    data = json.loads(path.read_text())
+    assert (data["chosen"], data["reason"], data["chosen_by"]) == ("A", "무난한 게 낫다", "human")
+    with pytest.raises(ValueError, match="가능한 값: A, B, C"):
+        choose_direction(path, "Z", None)
 
 
 def test_check_design_rejects_source_outside_candidates(tmp_path):

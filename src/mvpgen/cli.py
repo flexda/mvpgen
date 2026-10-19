@@ -12,6 +12,9 @@ import typer
 
 from mvpgen.identity import DEFAULT_AUDIENCE
 
+# 실패(1), 입력과 인증 오류(2)와 구분한다. 사람이 고르면 이어 갈 수 있는 정상 멈춤이다
+EXIT_AWAITING_CHOICE = 3
+
 app = typer.Typer(add_completion=False, help="한 줄 아이디어로 실행 가능한 MVP를 만든다.")
 
 
@@ -19,13 +22,13 @@ app = typer.Typer(add_completion=False, help="한 줄 아이디어로 실행 가
 def generate(
     idea: Annotated[str | None, typer.Argument(help="만들 MVP 아이디어 한 줄")] = None,
     out: Annotated[Path, typer.Option(help="결과를 저장할 폴더")] = Path("workspace"),
-    model: Annotated[str, typer.Option(help="사용할 Claude 모델")] = "claude-opus-5-5",
+    model: Annotated[str | None, typer.Option(help="사용할 Claude 모델. 기본 claude-opus-5-5, --resume에서 생략하면 처음 값")] = None,
     stage_model: Annotated[list[str] | None, typer.Option(
         help="단계별 모델 STAGE=MODEL, 여러 번 지정 가능. STAGE: plan, design, build, critic(모든 critic), "
-             "plan-critic, design-critic, build-critic. 지정하지 않은 단계는 --model"
+             "plan-critic, design-critic, build-critic. 지정하지 않은 단계는 --model. --resume에서는 처음 값 위에 덮어쓴다"
     )] = None,
-    effort: Annotated[str, typer.Option(help="low, medium, high, xhigh, max")] = "high",
-    budget: Annotated[float, typer.Option(help="전체 비용 상한(USD, SDK 추정치 기준)")] = 10.0,
+    effort: Annotated[str | None, typer.Option(help="low, medium, high, xhigh, max. 기본 high, --resume에서 생략하면 처음 값")] = None,
+    budget: Annotated[float | None, typer.Option(help="전체 비용 상한(USD, SDK 추정치 기준). 기본 10, --resume에서 생략하면 처음 값")] = None,
     max_review_rounds: Annotated[int, typer.Option(help="단계별 critic 불합격 후 개정 횟수")] = 2,
     max_gate_blocks: Annotated[int, typer.Option(help="세션당 Stop hook이 종료를 막는 최대 횟수")] = 3,
     max_fix_rounds: Annotated[int, typer.Option(help="세션 종료 후에도 검사 실패 시 수정 세션 횟수")] = 2,
@@ -34,21 +37,28 @@ def generate(
     secrets: Annotated[Path, typer.Option(help="claude.env, mvp.env가 있는 폴더")] = Path("secrets"),
     lessons: Annotated[Path, typer.Option(help="실행 간 교훈 파일. 저장소에 커밋해 로컬과 Actions가 함께 쓴다")] = Path("lessons.md"),
     context: Annotated[Path | None, typer.Option(help="미리 조사한 참고 자료 폴더. 결과 폴더의 context/로 복사해 Plan과 Build가 읽는다")] = None,
-    design: Annotated[str, typer.Option(help="auto: 라이브러리에서 무작위 후보를 뽑아 의외의 디자인 방향을 정한다, off: 끈다, 파일 경로: 그 DESIGN.md를 그대로 쓴다")] = "auto",
+    design: Annotated[str | None, typer.Option(help="auto(기본): 라이브러리 후보로 디자인 방향 3개를 만들고 사람의 선택을 기다린다, off: 끈다, 파일 경로: 그 DESIGN.md를 그대로 쓴다. --resume에서 생략하면 처음 값")] = None,
     design_library: Annotated[Path, typer.Option(help="DESIGN.md 라이브러리 폴더 (<brand>/DESIGN.md)")] = Path("design-library"),
     design_candidates: Annotated[int, typer.Option(help="design auto에서 무작위로 뽑을 후보 수")] = 8,
     design_seed: Annotated[int | None, typer.Option(help="후보 추출 seed. 비우면 무작위이며 state.json에 기록된다")] = None,
+    choose: Annotated[str | None, typer.Option(help="design auto가 방향 3개를 만들고 멈춘 실행에서 고를 방향 id. --resume과 함께 쓴다")] = None,
+    reason: Annotated[str | None, typer.Option(help="--choose로 그 방향을 고른 이유. state.json과 concepts.json에 남아 실험 기록이 된다")] = None,
     gha_oidc: Annotated[bool, typer.Option(help="GitHub Actions에서 OIDC 토큰을 자동으로 받아 갱신")] = True,
     oidc_audience: Annotated[str, typer.Option(help="GitHub OIDC 토큰의 audience (federation 규칙과 같아야 함)")] = DEFAULT_AUDIENCE,
 ) -> None:
     from mvpgen.envfiles import load_claude_env, load_mvp_env
     from mvpgen.identity import GitHubOidcRefresher, anthropic_config_dir, detect_auth
-    from mvpgen.pipeline import Pipeline, RunConfig, find_run_dir, make_slug, parse_stage_models
+    from mvpgen.pipeline import Pipeline, RunConfig, find_run_dir, make_slug, parse_stage_models, resolve_settings
 
     try:
         stage_models = parse_stage_models(stage_model or [])
     except ValueError as e:
         raise typer.BadParameter(str(e), param_hint="--stage-model") from e
+
+    if (choose or reason) and not resume:
+        raise typer.BadParameter("--choose와 --reason은 방향 선택을 기다리는 실행을 --resume할 때만 쓴다", param_hint="--choose")
+    if reason and not choose:
+        raise typer.BadParameter("--reason은 --choose와 함께 쓴다", param_hint="--reason")
 
     out = out.resolve()
     secrets = secrets.resolve()
@@ -61,11 +71,19 @@ def generate(
         if found.name != resume:
             typer.echo(f"{resume}은 Plan 뒤에 {found.name}으로 이름이 바뀌었다. 그 폴더로 이어서 실행한다")
         run_dir = found
-        idea = idea or json.loads((run_dir / "state.json").read_text(encoding="utf-8"))["idea"]
+        state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+        idea = idea or state["idea"]
+        if choose and state.get("stages", {}).get("design", {}).get("status") != "awaiting_choice":
+            raise typer.BadParameter(f"{run_dir.name}은 디자인 방향 선택을 기다리는 실행이 아니다", param_hint="--choose")
     elif not idea:
         raise typer.BadParameter("아이디어를 입력하거나 --resume을 지정하라", param_hint="IDEA")
     else:
         run_dir = out / make_slug(idea)
+        state = None
+    settings = resolve_settings(
+        {"model": model, "stage_models": stage_models, "effort": effort, "budget_usd": budget, "design": design}, state)
+    model, stage_models, effort, budget, design = (
+        settings["model"], settings["stage_models"], settings["effort"], settings["budget_usd"], settings["design"])
 
     refresher = None
     if gha_oidc and GitHubOidcRefresher.available():
@@ -123,7 +141,7 @@ def generate(
         max_fix_rounds=max_fix_rounds, pass_threshold=pass_threshold,
         protected_paths=protected, mvp_env=mvp_env, lessons_path=lessons.resolve(),
         design=design, design_library=design_library.resolve(), design_candidates=design_candidates,
-        design_seed=design_seed,
+        design_seed=design_seed, choose=choose, choose_reason=reason,
     )
     typer.echo(f"아이디어: {idea}\n폴더: {run_dir}\n모델: {model} (effort {effort}), 예산 ${budget:.2f}")
     if stage_models:
@@ -131,12 +149,15 @@ def generate(
     typer.echo(f"디자인: {design}")
     typer.echo(f"Claude 인증: {auth}")
     typer.echo(f"MVP용 키: {', '.join(sorted(mvp_env)) or '없음'}")
+    pipeline = Pipeline(config, run_dir)
     try:
-        ok = asyncio.run(Pipeline(config, run_dir).run())
+        ok = asyncio.run(pipeline.run())
     finally:
         if refresher:
             refresher.stop()
-    raise typer.Exit(0 if ok else 1)
+    if ok:
+        raise typer.Exit(0)
+    raise typer.Exit(EXIT_AWAITING_CHOICE if pipeline.awaiting_choice else 1)
 
 
 def main() -> None:

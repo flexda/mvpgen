@@ -22,7 +22,8 @@ BUILD_RUBRIC = """\
 """
 
 DESIGN_RUBRIC = """\
-1. 의외성: concepts.json에서 고른 방향의 첫 화면이 흔한 "카드 그리드 + 필터" 목록과 분명히 다른가.
+1. 의외성: concepts.json에서 사람이 고른 방향(chosen)이 unexpected이면, 첫 화면이 흔한 "카드 그리드 + 필터" 목록과 분명히 다른가.
+   baseline을 골랐으면 의외성은 채점하지 않는다.
    원천 후보의 특징(색, 형태, 타이포, 구성)이 DESIGN.md의 실제 토큰과 레이아웃에 남아 있는가. 이름만 빌렸으면 major다.
 2. 맥락 번역: 빌린 디자인 언어가 이 앱의 내용과 의미 있게 이어지는가(metaphor). 장식으로만 붙였으면 major다.
    원천 DESIGN.md를 거의 그대로 복사했으면 major다.

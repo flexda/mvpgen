@@ -48,14 +48,18 @@ def make_fake_agent(calls):
         if stage == "plan":
             (cwd / "spec.json").write_text(json.dumps(fake_spec()))
             (cwd / "PRD.md").write_text("\n\n".join(f"{h}\n" + "내용 " * 40 for h in PRD_HEADINGS))
-        elif stage == "design":
+        elif stage == "design-directions":
             # 첫 종료 시도: 산출물이 없어 gate가 막아야 한다
             first = await gate({"hook_event_name": "Stop", "stop_hook_active": False}, None, None)
             assert first["decision"] == "block" and "concepts.json" in first["reason"]
             cands = sorted(p.stem for p in (cwd / "design-candidates").glob("*.md"))
             dirs = [{"id": i, "kind": k, "sources": [cands[n]], "metaphor": "m", "first_screen": "f", "risks": "r"}
                     for n, (i, k) in enumerate([("A", "baseline"), ("B", "unexpected"), ("C", "unexpected")])]
-            (cwd / "concepts.json").write_text(json.dumps({"directions": dirs, "chosen": "B", "reason": "의외"}))
+            (cwd / "concepts.json").write_text(json.dumps({"directions": dirs}))
+            assert await gate({"hook_event_name": "Stop", "stop_hook_active": True}, None, None) == {}
+        elif stage == "design":
+            first = await gate({"hook_event_name": "Stop", "stop_hook_active": False}, None, None)
+            assert first["decision"] == "block" and "DESIGN.md" in first["reason"]
             (cwd / "DESIGN.md").write_text(DESIGN_MD)
             assert await gate({"hook_event_name": "Stop", "stop_hook_active": True}, None, None) == {}
         elif stage == "build":
@@ -209,7 +213,7 @@ async def test_api_error_aborts_with_real_message(tmp_path, monkeypatch):
     assert calls == ["plan"]
 
 
-async def test_design_auto_runs_between_plan_and_build(tmp_path, monkeypatch):
+async def test_design_auto_pauses_for_choice_then_resumes(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setattr(pipeline_mod, "run_agent", make_fake_agent(calls))
     run_dir = tmp_path / "run"
@@ -217,19 +221,56 @@ async def test_design_auto_runs_between_plan_and_build(tmp_path, monkeypatch):
     config = RunConfig(idea="할 일 목록", out_dir=tmp_path, budget_usd=5, design="auto",
                        design_library=make_library(tmp_path / "lib"), design_candidates=3, design_seed=7)
 
-    assert await Pipeline(config, run_dir).run() is True
-
-    stages = [c[0] for c in calls]
-    assert stages == ["plan", "plan-critic", "plan", "plan-critic", "design", "design-critic", "build", "build-critic"]
+    # 1차: 방향 3개를 만들고 사람의 선택을 기다리며 멈춘다. 실패가 아니다
+    pipe = Pipeline(config, run_dir)
+    assert await pipe.run() is False
+    assert pipe.awaiting_choice
+    assert [c[0] for c in calls] == ["plan", "plan-critic", "plan", "plan-critic", "design-directions"]
     report = json.loads((run_dir / "run_report.json").read_text())
+    assert report["status"] == "awaiting_choice" and report["error"] is None
     assert report["design"]["seed"] == 7 and len(report["design"]["candidates"]) == 3
+    assert all(c in calls[-1][1] for c in report["design"]["candidates"])
+    readme = (run_dir / "README.md").read_text()
+    assert "## C (unexpected)" in readme and "--resume run --choose <id>" in readme
+
+    # 2차: 고른 방향으로 DESIGN.md를 쓰고 끝까지 간다. 방향은 다시 만들지 않는다
+    calls.clear()
+    config.choose, config.choose_reason = "C", "의외라서"
+    pipe = Pipeline(config, run_dir)
+    assert await pipe.run() is True
+    stages = [c[0] for c in calls]
+    assert stages == ["design", "design-critic", "build", "build-critic"]
+    concepts = json.loads((run_dir / "concepts.json").read_text())
+    assert concepts["chosen"] == "C" and concepts["chosen_by"] == "human" and concepts["reason"] == "의외라서"
+    report = json.loads((run_dir / "run_report.json").read_text())
+    assert report["status"] == "success"
+    assert report["design"]["choice"] == {"id": "C", "kind": "unexpected", "reason": "의외라서"}
     assert report["stages"]["design"]["status"] == "passed"
-    # 후보 목록이 Design 프롬프트에, DESIGN.md 안내가 Build와 Build critic 프롬프트에 들어가야 한다
-    design_prompt = next(p for s, p in calls if s == "design")
-    assert all(c in design_prompt for c in report["design"]["candidates"])
+    # 고른 방향의 원천이 Design 프롬프트에, DESIGN.md 안내가 Build와 Build critic 프롬프트에 들어가야 한다
+    c_source = next(d for d in concepts["directions"] if d["id"] == "C")["sources"][0]
+    assert f"design-candidates/{c_source}.md" in next(p for s, p in calls if s == "design")
     assert "DESIGN.md" in next(p for s, p in calls if s == "build")
     assert "DESIGN.md" in next(p for s, p in calls if s == "build-critic")
     assert "- design: passed" in (run_dir / "README.md").read_text()
+
+
+async def test_design_unknown_choice_keeps_waiting(tmp_path, monkeypatch):
+    monkeypatch.setattr(pipeline_mod, "run_agent", make_fake_agent([]))
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    config = RunConfig(idea="x", out_dir=tmp_path, budget_usd=5, design="auto",
+                       design_library=make_library(tmp_path / "lib"), design_candidates=3)
+    assert await Pipeline(config, run_dir).run() is False
+
+    config.choose = "Z"
+    pipe = Pipeline(config, run_dir)
+    assert await pipe.run() is False
+    report = json.loads((run_dir / "run_report.json").read_text())
+    # 잘못 고른 것은 다시 고르면 된다. 대기 상태와 선택 안내가 그대로 남는다
+    assert report["status"] == "awaiting_choice" and "'Z'는 방향 id가 아니다" in report["error"]
+    assert pipe.awaiting_choice
+    readme = (run_dir / "README.md").read_text()
+    assert "직전 선택 오류" in readme and "## B (unexpected)" in readme
 
 
 async def test_design_resume_keeps_candidates(tmp_path, monkeypatch):
@@ -237,7 +278,8 @@ async def test_design_resume_keeps_candidates(tmp_path, monkeypatch):
     run_dir = tmp_path / "run"
     run_dir.mkdir()
     lib = make_library(tmp_path / "lib", n=10)
-    config = RunConfig(idea="x", out_dir=tmp_path, budget_usd=5, design="auto", design_library=lib, design_candidates=3)
+    config = RunConfig(idea="x", out_dir=tmp_path, budget_usd=5, design="auto", design_library=lib, design_candidates=3,
+                       choose="A")
     pipe = Pipeline(config, run_dir)
     pipe.state["design"] = {"seed": 1, "candidates": ["brand2", "brand5", "brand9"]}
     pipe._save()

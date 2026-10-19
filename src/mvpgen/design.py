@@ -37,29 +37,36 @@ def copy_candidates(library: Path, brands: list[str], run_dir: Path) -> list[str
     return paths
 
 
-def check_concepts(path: Path, candidates: list[str]) -> list[str]:
+def _load_concepts(path: Path) -> tuple[dict | None, list[str]]:
     if not path.exists():
-        return ["concepts.json이 없다"]
+        return None, ["concepts.json이 없다"]
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
-        return [f"concepts.json이 올바른 JSON이 아니다: {e}"]
+        return None, [f"concepts.json이 올바른 JSON이 아니다: {e}"]
     if not isinstance(data, dict):
-        return ["concepts.json은 객체여야 한다"]
+        return None, ["concepts.json은 객체여야 한다"]
+    return data, []
 
-    problems: list[str] = []
+
+def check_directions(path: Path, candidates: list[str]) -> list[str]:
+    """방향 3개(사람이 고르기 전)를 검사한다. chosen은 보지 않는다."""
+    data, problems = _load_concepts(path)
+    if data is None:
+        return problems
     directions = data.get("directions")
     if not isinstance(directions, list) or len(directions) != 3:
         return ["concepts.json의 directions는 방향 3개짜리 목록이어야 한다 (baseline 1개, unexpected 2개)"]
     kinds = [str(d.get("kind")) if isinstance(d, dict) else "" for d in directions]
     if sorted(kinds) != ["baseline", "unexpected", "unexpected"]:
         problems.append(f"directions의 kind는 baseline 1개와 unexpected 2개여야 한다 (지금: {kinds})")
-    by_id: dict[str, dict] = {}
+    ids = [str(d.get("id", "")) for d in directions if isinstance(d, dict)]
+    if len(set(ids)) != len(ids) or "" in ids:
+        problems.append(f"directions의 id는 비어 있지 않고 서로 달라야 한다 (지금: {ids})")
     for d in directions:
         if not isinstance(d, dict):
             continue
         did = str(d.get("id", ""))
-        by_id[did] = d
         sources = d.get("sources")
         if not isinstance(sources, list) or not sources:
             problems.append(f"방향 {did}에 sources(원천 브랜드 목록)가 없다")
@@ -70,14 +77,33 @@ def check_concepts(path: Path, candidates: list[str]) -> list[str]:
         for key in ("metaphor", "first_screen", "risks"):
             if not str(d.get(key, "")).strip():
                 problems.append(f"방향 {did}에 {key}가 비어 있다")
+    return problems
 
-    chosen = by_id.get(str(data.get("chosen", "")))
+
+def directions_of(path: Path) -> list[dict]:
+    return json.loads(path.read_text(encoding="utf-8"))["directions"]
+
+
+def choose_direction(path: Path, direction_id: str, reason: str | None) -> dict:
+    """사람이 고른 방향을 concepts.json에 적고 그 방향을 돌려준다. 없는 id면 ValueError."""
+    data = json.loads(path.read_text(encoding="utf-8"))
+    chosen = next((d for d in data["directions"] if str(d.get("id")) == direction_id), None)
     if chosen is None:
+        ids = ", ".join(str(d.get("id")) for d in data["directions"])
+        raise ValueError(f"{direction_id!r}는 방향 id가 아니다. 가능한 값: {ids}")
+    data.update(chosen=direction_id, reason=reason or "", chosen_by="human")
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    return chosen
+
+
+def check_concepts(path: Path, candidates: list[str]) -> list[str]:
+    """방향 검사에 더해 chosen이 방향 id 중 하나인지 본다. baseline을 골라도 된다(사람이 고른다)."""
+    problems = check_directions(path, candidates)
+    if problems:
+        return problems
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if str(data.get("chosen", "")) not in {str(d.get("id")) for d in data["directions"]}:
         problems.append("chosen이 directions의 id 중 하나가 아니다")
-    elif chosen.get("kind") != "unexpected":
-        problems.append("기준안(baseline)을 골랐다. unexpected 방향 중 하나를 골라라")
-    if not str(data.get("reason", "")).strip():
-        problems.append("reason(선택 이유)이 비어 있다")
     return problems
 
 

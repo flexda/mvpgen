@@ -16,7 +16,8 @@ from mvpgen import prompts
 from mvpgen.agents import AgentRun, run_agent
 from mvpgen.context import list_context
 from mvpgen.critic import RoundTracker, Review, check_review_file, is_accepted, load_review
-from mvpgen.design import check_design, copy_candidates, list_library, pick_candidates
+from mvpgen.design import (check_design, check_directions, choose_direction, copy_candidates, directions_of, list_library,
+                           pick_candidates)
 from mvpgen.gates import StopGate
 from mvpgen.lessons import lessons_prompt, record_lessons
 from mvpgen.rubrics import BUILD_RUBRIC, DESIGN_RUBRIC, PLAN_RUBRIC
@@ -56,16 +57,19 @@ class StageFailed(RuntimeError):
     pass
 
 
+class AwaitingChoice(RuntimeError):
+    """사람이 고를 차례라 실행을 멈춘다. 실패가 아니다. --resume --choose로 이어 간다."""
+
+
 # --stage-model에 쓸 수 있는 키. critic은 모든 critic에 적용되고, 개별 critic 키가 그보다 우선한다
 STAGE_MODEL_KEYS = (*STAGES, "critic", *(f"{s}-critic" for s in STAGES))
 
 
 def model_for(stage: str, stage_models: dict[str, str], default: str) -> str:
-    """세션 이름(plan, build-fix1, design-critic 등)에 쓸 모델. build-fixN은 build 설정을 따른다."""
+    """세션 이름(plan, build-fix1, design-critic 등)에 쓸 모델. build-fixN, design-directions는 앞 단계 설정을 따른다."""
     if stage.endswith("-critic"):
         return stage_models.get(stage) or stage_models.get("critic") or default
-    base = "build" if stage.startswith("build-fix") else stage
-    return stage_models.get(base) or default
+    return stage_models.get(stage.split("-", 1)[0]) or default
 
 
 def parse_stage_models(items: list[str]) -> dict[str, str]:
@@ -114,6 +118,27 @@ class RunConfig:
     design_library: Path | None = None
     design_candidates: int = 8
     design_seed: int | None = None
+    # design auto에서 사람이 고른 방향 id와 이유. 방향을 만든 뒤 멈춘 실행을 --resume으로 이어 갈 때 준다
+    choose: str | None = None
+    choose_reason: str | None = None
+
+
+# 실행 설정 중 --resume에서 플래그를 생략하면 처음 실행의 값을 이어 쓰는 것과 그 기본값
+SETTING_DEFAULTS: dict[str, Any] = {
+    "model": "claude-opus-5-5", "stage_models": {}, "effort": "high", "budget_usd": 10.0, "design": "auto",
+}
+
+
+def resolve_settings(given: dict[str, Any], state: dict[str, Any] | None) -> dict[str, Any]:
+    """given에서 None인 값(stage_models는 빈 dict)은 state에 저장된 값, 그것도 없으면 기본값을 쓴다.
+    stage_models는 저장된 값 위에 given을 덮어쓴다."""
+    saved: dict[str, Any] = {}
+    if state is not None:
+        # settings가 생기기 전의 state에도 model과 stage_models는 있다
+        saved = {"model": state.get("model"), "stage_models": state.get("stage_models") or {}, **state.get("settings", {})}
+    merged = {k: given.get(k) if given.get(k) is not None else saved.get(k, d) for k, d in SETTING_DEFAULTS.items()}
+    merged["stage_models"] = {**saved.get("stage_models", {}), **(given.get("stage_models") or {})}
+    return merged
 
 
 def make_slug(idea: str, now: datetime | None = None) -> str:
@@ -158,6 +183,9 @@ class Pipeline:
         self.lessons_path = config.lessons_path or config.out_dir / "lessons.md"
         self._set_run_dir(run_dir)
         self.state: dict[str, Any] = self._load_state()
+        # --resume이 플래그를 생략했을 때 이어 쓸 값. 마지막 실행의 설정을 남긴다
+        self.state["settings"] = {"model": config.model, "stage_models": config.stage_models, "effort": config.effort,
+                                  "budget_usd": config.budget_usd, "design": config.design}
 
     def _set_run_dir(self, run_dir: Path) -> None:
         # 모든 단계가 이 세 경로에서 파일 경로를 만든다. 폴더 이름을 바꾸면 여기서 한 번에 갱신한다
@@ -211,6 +239,10 @@ class Pipeline:
 
     def _gate(self, stage: Stage, check: Callable[[], tuple[bool, str]]) -> StopGate:
         return StopGate(stage.label, check, self.config.max_gate_blocks)
+
+    @property
+    def awaiting_choice(self) -> bool:
+        return self.state["stages"].get("design", {}).get("status") == "awaiting_choice"
 
     @property
     def spent(self) -> float:
@@ -402,18 +434,59 @@ class Pipeline:
         copy_candidates(library, picked["candidates"], self.run_dir)
         print(f"\n== design 후보 (seed {picked['seed']}): {', '.join(picked['candidates'])}", flush=True)
 
+        concepts = self.run_dir / "concepts.json"
+        # 방향은 한 번만 만든다. 멈춘 뒤나 고른 뒤에 --resume하면 이미 있는 방향을 쓴다
+        if info["status"] != "awaiting_choice" and picked.get("choice") is None:
+            await self._directions(stage, picked["candidates"])
+        if picked.get("choice") is None:
+            if self.config.choose is None:
+                info["status"] = "awaiting_choice"
+                self._save()
+                raise AwaitingChoice("디자인 방향을 사람이 고를 차례다")
+            try:
+                chosen = choose_direction(concepts, self.config.choose, self.config.choose_reason)
+            except ValueError as e:
+                raise StageFailed(str(e)) from e
+            picked["choice"] = {"id": self.config.choose, "kind": chosen["kind"], "reason": self.config.choose_reason}
+            info["status"] = "chosen"
+            self._save()
+            print(f"\n== design: 사람이 고른 방향 {chosen['id']} ({chosen['kind']})", flush=True)
+        chosen = next(d for d in directions_of(concepts) if str(d["id"]) == picked["choice"]["id"])
+
         system = prompts.DESIGN_SYSTEM + lessons_prompt(self.lessons_path, stage.name)
-        writable = [self.run_dir / "concepts.json", self.run_dir / "DESIGN.md"]
+        writable = [self.run_dir / "DESIGN.md"]
 
         async def generate(feedback: str | None, round_no: int) -> None:
             await self._agent(
                 stage=stage.name, round_no=round_no, system_prompt=system,
-                prompt=prompts.design_prompt(self.config.idea, picked["candidates"], feedback, list_context(self.run_dir)),
+                prompt=prompts.design_prompt(self.config.idea, chosen, feedback, list_context(self.run_dir)),
                 tools=list(stage.gen_tools), writable=writable, max_turns=self.config.design_max_turns,
                 gate=self._gate(stage, self._design_check),
             )
 
         await self._review_loop(stage, paths=writable, generate=generate, check=self._design_check)
+
+    async def _directions(self, stage: Stage, candidates: list[str]) -> None:
+        """디자인 방향 3개를 concepts.json에 쓴다. 고르는 것은 사람이다."""
+        concepts = self.run_dir / "concepts.json"
+
+        def check() -> tuple[bool, str]:
+            problems = check_directions(concepts, candidates)
+            return (not problems), ("\n".join(f"- {p}" for p in problems) or "Design 방향 검사 통과")
+
+        print("\n== design: 방향 3개 생성", flush=True)
+        await self._agent(
+            stage=f"{stage.name}-directions", round_no=1,
+            system_prompt=prompts.DIRECTIONS_SYSTEM + lessons_prompt(self.lessons_path, stage.name),
+            prompt=prompts.directions_prompt(self.config.idea, candidates, list_context(self.run_dir)),
+            tools=list(stage.gen_tools), writable=[concepts], max_turns=self.config.design_max_turns,
+            gate=StopGate(f"{stage.label} 방향", check, self.config.max_gate_blocks),
+        )
+        ok, report = check()
+        if not ok:
+            self._stage(stage.name).update(status="failed", last_check=report)
+            self._save()
+            raise StageFailed(f"design 방향이 자동 검사를 통과하지 못했다:\n{report}")
 
     async def build(self) -> None:
         stage = STAGES["build"]
@@ -470,6 +543,8 @@ class Pipeline:
             "run_dir": self.run_dir.name,
             "renamed_from": self.state.get("renamed_from"),
             "success": verify_ok and error is None,
+            # 잘못된 --choose로 끝나도 아직 고를 수 있으므로 대기다
+            "status": "awaiting_choice" if self.awaiting_choice else ("success" if verify_ok and error is None else "failed"),
             "error": error,
             "model": self.config.model,
             "stage_models": self.config.stage_models,
@@ -483,8 +558,10 @@ class Pipeline:
         }
         report_path = self.run_dir / "run_report.json"
         report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-        (self.run_dir / "README.md").write_text(_readme(self.config.idea, spec, stages, self.spent, report["success"], error),
-                                                encoding="utf-8")
+        readme = _readme(self.config.idea, spec, stages, self.spent, report["success"], error)
+        if report["status"] == "awaiting_choice":
+            readme = _choice_readme(self.config.idea, self.run_dir, self.config.out_dir, self.spent, error)
+        (self.run_dir / "README.md").write_text(readme, encoding="utf-8")
         return report_path
 
     async def run(self) -> bool:
@@ -496,13 +573,18 @@ class Pipeline:
             await self.design()
             await self.build()
             self.final_verify()
+        except AwaitingChoice:
+            pass
         except (BudgetExceeded, StageFailed, AgentAborted) as e:
             error = str(e)
             print(f"\n중단: {error}", flush=True)
         report_path = self.write_report(error)
-        ok = json.loads(report_path.read_text(encoding="utf-8"))["success"]
-        print(f"\n결과: {'성공' if ok else '실패'}  비용 추정 ${self.spent:.2f}\n폴더: {self.run_dir}\n리포트: {report_path}")
-        return ok
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        if report["status"] == "awaiting_choice":
+            print("\n" + (self.run_dir / "README.md").read_text(encoding="utf-8"))
+        result = {"success": "성공", "failed": "실패", "awaiting_choice": "선택 대기"}[report["status"]]
+        print(f"\n결과: {result}  비용 추정 ${self.spent:.2f}\n폴더: {self.run_dir}\n리포트: {report_path}")
+        return report["success"]
 
 
 def _readme(idea: str, spec: Spec | None, stages: dict[str, Any], cost: float, success: bool, error: str | None) -> str:
@@ -529,4 +611,17 @@ def _readme(idea: str, spec: Spec | None, stages: dict[str, Any], cost: float, s
     if "verify" in stages:
         lines.append(f"- 최종 검증: {stages['verify']['status']}")
     lines += ["", "세부 내용은 run_report.json, reviews/, logs/ 참고.", ""]
+    return "\n".join(lines)
+
+
+def _choice_readme(idea: str, run_dir: Path, out_dir: Path, cost: float, error: str | None) -> str:
+    lines = ["# 디자인 방향 선택 대기", "", f"아이디어: {idea}", "", f"지금까지 비용 추정 ${cost:.2f}", ""]
+    if error:
+        lines += [f"직전 선택 오류: {error}", ""]
+    lines += ["방향 3개 중 하나를 골라 이어서 실행하라. 모델, effort, 예산은 처음 실행의 값을 이어 쓴다.",
+              "자세한 내용은 concepts.json과 design-candidates/ 참고.", ""]
+    for d in directions_of(run_dir / "concepts.json"):
+        lines += [f"## {d['id']} ({d['kind']}) - {', '.join(d['sources'])}", "", f"- 은유: {d['metaphor']}",
+                  f"- 첫 화면: {d['first_screen']}", f"- 위험: {d['risks']}", ""]
+    lines += ["```bash", f'uv run mvpgen --out {out_dir} --resume {run_dir.name} --choose <id> --reason "고른 이유"', "```", ""]
     return "\n".join(lines)
