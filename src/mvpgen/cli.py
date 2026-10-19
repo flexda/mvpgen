@@ -41,7 +41,14 @@ def generate(
     lessons: Annotated[Path, typer.Option(help="실행 간 교훈 파일. 저장소에 커밋해 로컬과 Actions가 함께 쓴다")] = Path("lessons.md"),
     context: Annotated[Path | None, typer.Option(help="미리 조사한 참고 자료 폴더. 결과 폴더의 context/로 복사해 PRD, Spec, Build가 읽는다")] = None,
     design: Annotated[str | None, typer.Option(help="auto(기본): 라이브러리 후보로 디자인 방향 3개를 만들고 사람의 선택을 기다린다, off: 끈다, 파일 경로: 그 DESIGN.md를 그대로 쓴다. --resume에서 생략하면 처음 값")] = None,
-    design_library: Annotated[Path, typer.Option(help="DESIGN.md 라이브러리 폴더 (<brand>/DESIGN.md)")] = Path("design-library"),
+    design_library: Annotated[Path, typer.Option(
+        help="DESIGN.md 라이브러리 폴더 (<이름>/DESIGN.md). 레퍼런스 사이트에서 원천을 못 구했을 때 쓴다. 직접 고른 DESIGN.md 폴더를 줘도 된다"
+    )] = Path("design-library"),
+    design_sources: Annotated[Path, typer.Option(help="디자인 원천을 찾을 레퍼런스 사이트 목록")] = Path("design-sources.toml"),
+    design_refs: Annotated[bool | None, typer.Option(
+        "--design-refs/--no-design-refs",
+        help="레퍼런스 사이트에서 원천을 찾는다(웹 검색). 끄면 --design-library만 쓴다. 기본 켬, --resume에서 생략하면 처음 값",
+    )] = None,
     spec_candidates: Annotated[int | None, typer.Option(min=1, max=4, help="Spec 단계가 만들 구현 후보 수. critic이 하나를 고른다. 기본 2, --resume에서 생략하면 처음 값")] = None,
     research: Annotated[bool | None, typer.Option(
         "--research/--no-research", help="Spec 후보마다 웹 검색으로 조사해 research/에 남긴다. 기본 켬, --resume에서 생략하면 처음 값"
@@ -103,10 +110,10 @@ def generate(
         state = None
     settings = resolve_settings(
         {"model": model, "stage_models": stage_models, "effort": effort, "budget_usd": budget, "design": design,
-         "spec_candidates": spec_candidates, "research": research}, state)
+         "spec_candidates": spec_candidates, "research": research, "design_refs": design_refs}, state)
     model, stage_models, effort, budget, design = (
         settings["model"], settings["stage_models"], settings["effort"], settings["budget_usd"], settings["design"])
-    spec_candidates, research = settings["spec_candidates"], settings["research"]
+    spec_candidates, research, design_refs = settings["spec_candidates"], settings["research"], settings["design_refs"]
 
     refresher = None
     if gha_oidc and GitHubOidcRefresher.available():
@@ -172,7 +179,8 @@ def generate(
         max_fix_rounds=max_fix_rounds, pass_threshold=pass_threshold,
         protected_paths=protected, mvp_env=mvp_env, lessons_path=lessons.resolve(),
         design=design, design_library=design_library.resolve(), choose_spec=choose_spec, spec_reason=spec_reason,
-        choose_design=choose_design, design_reason=design_reason, spec_candidates=spec_candidates, research=research,
+        choose_design=choose_design, design_reason=design_reason, spec_candidates=spec_candidates, research=research, design_refs=design_refs,
+        design_sources=design_sources.resolve() if design_sources.is_file() else None,
     )
     typer.echo(f"아이디어: {idea}\n폴더: {run_dir}\n모델: {model} (effort {effort}), 예산 ${budget:.2f}")
     if stage_models:

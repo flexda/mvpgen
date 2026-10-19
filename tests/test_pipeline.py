@@ -16,7 +16,7 @@ def test_resolve_settings_reads_legacy_state_and_defaults():
     legacy = {"model": "m0", "stage_models": {"plan": "p"}}
     got = resolve_settings({"model": None, "stage_models": {}, "effort": None, "budget_usd": None, "design": None}, legacy)
     assert got == {"model": "m0", "stage_models": {"plan": "p"}, "effort": "high", "budget_usd": 10.0, "design": "auto",
-                   "spec_candidates": 2, "research": True}
+                   "spec_candidates": 2, "research": True, "design_refs": True}
     # --no-research(False)는 생략(None)과 달리 저장값을 덮는다
     assert resolve_settings({"research": False}, {"settings": {"research": True}})["research"] is False
     assert resolve_settings({"effort": "low"}, None)["effort"] == "low"

@@ -74,13 +74,14 @@ async def run_agent(
     gate: StopGate | None = None,
     env: dict[str, str] | None = None,
     protected: list[Path] | None = None,
+    web_domains: list[str] | None = None,
 ) -> AgentRun:
     """한 단계의 에이전트 세션을 실행한다. 허용 목록 밖 도구는 묻지 않고 거부한다(dontAsk)."""
     hooks: dict[str, list[HookMatcher]] = {
         "PreToolUse": [
             HookMatcher(
                 matcher="Bash|Write|Edit|MultiEdit|NotebookEdit|Read|Grep|Glob|WebFetch|WebSearch",
-                hooks=[make_guard(cwd, writable, protected, list((env or {}).values()))],
+                hooks=[make_guard(cwd, writable, protected, list((env or {}).values()), web_domains)],
             )
         ],
     }

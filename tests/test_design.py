@@ -3,7 +3,7 @@ import json
 import pytest
 
 from mvpgen.design import (DESIGN_HEADINGS, check_design, check_design_md, check_directions, check_previews, choose_direction,
-                           contrast_ratio, copy_candidates, write_index)
+                           contrast_ratio, copy_candidates, library_docs, write_index)
 
 CANDIDATES = ["airbnb", "nintendo-2001", "spacex"]
 
@@ -46,8 +46,8 @@ def test_write_index_lists_name_and_description(tmp_path):
     (lib / "plain").mkdir()
     (lib / "plain" / "DESIGN.md").write_text("# 프런트매터 없음")
     (tmp_path / "run" / "design-candidates").mkdir(parents=True)
-    index = write_index(lib, ["plain", "stedelijk"], tmp_path / "run").read_text()
-    assert "- stedelijk: Swiss museum grid, black on white" in index and "- plain: \n" in index
+    index = write_index(tmp_path / "run", library_docs(lib, ["plain", "stedelijk"]), {"stedelijk": "src (MIT)"}).read_text()
+    assert "- stedelijk: Swiss museum grid, black on white (출처: src (MIT))" in index and "- plain: \n" in index
 
 
 def test_copy_candidates_flattens_into_run_dir(tmp_path):

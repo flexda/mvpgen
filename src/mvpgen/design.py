@@ -63,14 +63,19 @@ def _description(design_md: str) -> str:
     return m.group(1).strip().strip('"')[:INDEX_DESCRIPTION_MAX] if m else ""
 
 
-def write_index(library: Path, brands: list[str], run_dir: Path) -> Path:
-    """에이전트가 원천을 고를 수 있게 이름과 한 줄 설명 목록을 design-candidates/INDEX.md로 쓴다."""
+def write_index(run_dir: Path, docs: dict[str, str], notes: dict[str, str] | None = None) -> Path:
+    """에이전트가 원천을 고를 수 있게 이름과 한 줄 설명(있으면 출처) 목록을 design-candidates/INDEX.md로 쓴다."""
     lines = ["# 디자인 원천 목록", "", "이름: 한 줄 설명. 분야에 어울리는 것만 골라 design-candidates/<이름>.md를 끝까지 읽는다.", ""]
-    for b in brands:
-        lines.append(f"- {b}: {_description((library / b / 'DESIGN.md').read_text(encoding='utf-8'))}")
+    for name, text in docs.items():
+        note = (notes or {}).get(name)
+        lines.append(f"- {name}: {_description(text)}" + (f" (출처: {note})" if note else ""))
     path = run_dir / CANDIDATES_DIRNAME / INDEX_NAME
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
+
+
+def library_docs(library: Path, brands: list[str]) -> dict[str, str]:
+    return {b: (library / b / "DESIGN.md").read_text(encoding="utf-8") for b in brands}
 
 
 def copy_candidates(library: Path, brands: list[str], run_dir: Path) -> list[str]:

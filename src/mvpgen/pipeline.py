@@ -16,10 +16,11 @@ from mvpgen import prompts
 from mvpgen.agents import AgentRun, run_agent
 from mvpgen.context import BRIEF_NAME, list_context
 from mvpgen.critic import RoundTracker, Review, Screening, check_review_file, check_screening_file, is_accepted, load_review, load_screening
-from mvpgen.design import (PREVIEWS_DIRNAME, check_design, check_design_md, check_directions, check_previews, choose_direction,
-                           copy_candidates, directions_of, list_library, write_index)
+from mvpgen.design import (CANDIDATES_DIRNAME, PREVIEWS_DIRNAME, check_design, check_design_md, check_directions, check_previews,
+                           choose_direction, copy_candidates, directions_of, library_docs, list_library, write_index)
 from mvpgen.gates import StopGate
 from mvpgen.lessons import lessons_prompt, record_lessons
+from mvpgen.refsources import PICKS_NAME, RefError, check_picks, fetch, load_sources, resolve, web_domains
 from mvpgen.research import RESEARCH_DIRNAME, check_research
 from mvpgen.rubrics import BUILD_RUBRIC, PRD_RUBRIC, SPEC_RUBRIC
 from mvpgen.spec import (Spec, candidate, candidate_ids, candidate_spec, candidates_have_screen, check_prd, check_spec,
@@ -52,6 +53,10 @@ STAGES: dict[str, Stage] = {s.name: s for s in (
 
 # Spec 후보를 조사하는 세션의 도구. 쓰기는 자기 조사 파일 하나로 막고, 셸은 주지 않는다
 RESEARCH_TOOLS = ("Read", "Glob", "Grep", "Write", "WebSearch", "WebFetch")
+# 디자인 원천 검색 세션의 도구. 웹 도구는 design-sources.toml의 도메인으로 묶는다
+REFS_TOOLS = ("Read", "Glob", "Write", "WebSearch", "WebFetch")
+# 원천을 내려받아 이만큼도 못 모으면 로컬 라이브러리로 돌아간다
+MIN_REFS = 2
 
 # 이 상태로 끝난 단계는 --resume에서 다시 돌리지 않는다
 DONE_STATUSES = frozenset({"passed", "passed_with_issues"})
@@ -131,6 +136,9 @@ class RunConfig:
     # 후보마다 조사 세션(웹 검색 포함)을 돌려 research/<id>.md를 남기고 spec critic이 근거로 쓴다
     research: bool = True
     research_max_turns: int = 40
+    # 디자인 원천을 찾을 레퍼런스 사이트 목록. None이거나 design_refs가 꺼져 있으면 design_library만 쓴다
+    design_sources: Path | None = None
+    design_refs: bool = True
     design_max_turns: int = 60
     build_max_turns: int = 150
     critic_max_turns: int = 60
@@ -152,7 +160,7 @@ class RunConfig:
 # 실행 설정 중 --resume에서 플래그를 생략하면 처음 실행의 값을 이어 쓰는 것과 그 기본값
 SETTING_DEFAULTS: dict[str, Any] = {
     "model": "claude-opus-5-5", "stage_models": {}, "effort": "high", "budget_usd": 10.0, "design": "auto",
-    "spec_candidates": 2, "research": True,
+    "spec_candidates": 2, "research": True, "design_refs": True,
 }
 
 
@@ -213,7 +221,8 @@ class Pipeline:
         # --resume이 플래그를 생략했을 때 이어 쓸 값. 마지막 실행의 설정을 남긴다
         self.state["settings"] = {"model": config.model, "stage_models": config.stage_models, "effort": config.effort,
                                   "budget_usd": config.budget_usd, "design": config.design,
-                                  "spec_candidates": config.spec_candidates, "research": config.research}
+                                  "spec_candidates": config.spec_candidates, "research": config.research,
+                                  "design_refs": config.design_refs}
 
     def _set_run_dir(self, run_dir: Path) -> None:
         # 모든 단계가 이 세 경로에서 파일 경로를 만든다. 폴더 이름을 바꾸면 여기서 한 번에 갱신한다
@@ -599,35 +608,34 @@ class Pipeline:
         if not self._wants_design_directions():
             return
         stage = STAGES["design"]
-        library = self.config.design_library
-        if library is None or not list_library(library):
-            raise StageFailed(f"디자인 라이브러리에 DESIGN.md가 없다: {library}")
-        # 무작위로 뽑지 않는다. 라이브러리 전체와 목록을 두고 에이전트가 분야에 어울리는 원천을 고른다(concepts.json의 sources)
-        picked = self.state.setdefault("design", {"library": str(library), "candidates": list_library(library)})
-        self._save()
         concepts = self.run_dir / "concepts.json"
         cand_dir = self.run_dir / "spec-candidates"
         # 기능은 모든 spec 후보가 같다(check_spec_candidates)
         feature_ids = [f["id"] for f in candidate_spec(cand_dir, candidate_ids(cand_dir)[0])["features"]]
 
         def check() -> tuple[bool, str]:
-            problems = check_directions(concepts, picked["candidates"])
+            problems = check_directions(concepts, self.state["design"]["candidates"])
             if not problems:
                 problems = check_previews(self.run_dir, [str(d["id"]) for d in directions_of(concepts)], feature_ids)
             return self._report(problems, "Design 방향")
 
         # 방향은 한 번만 만든다. 멈춘 뒤에 --resume하면 이미 있는 방향과 미리보기를 쓴다
-        if check()[0]:
+        if "design" in self.state and check()[0]:
             return
-        copy_candidates(library, picked["candidates"], self.run_dir)
-        write_index(library, picked["candidates"], self.run_dir)
-        print(f"\n== design 원천: {library}의 {len(picked['candidates'])}개 중에서 고른다", flush=True)
+        if "design" not in self.state:
+            self.state["design"] = await self._design_sources()
+            self._save()
+        elif self.state["design"].get("source", "library") == "library":
+            # 원천을 고르기 전에 끊긴 실행이다. 라이브러리 원천은 다시 복사한다(레퍼런스 원천은 이미 내려받아 있다)
+            self._copy_library(Path(self.state["design"]["library"]), self.state["design"]["candidates"])
+        picked = self.state["design"]
+        print(f"\n== design 원천: {picked.get('source', 'library')} {len(picked['candidates'])}개", flush=True)
 
         print("\n== design: 방향 3개 생성", flush=True)
         await self._agent(
             stage=f"{stage.name}-directions", round_no=1,
             system_prompt=prompts.DIRECTIONS_SYSTEM + lessons_prompt(self.lessons_path, stage.name),
-            prompt=prompts.directions_prompt(self.config.idea, feature_ids, list_context(self.run_dir)),
+            prompt=prompts.directions_prompt(self.config.idea, feature_ids, list_context(self.run_dir), picked.get("type")),
             tools=list(stage.gen_tools), writable=[concepts, self.run_dir / PREVIEWS_DIRNAME],
             max_turns=self.config.design_max_turns,
             gate=StopGate(f"{stage.label} 방향", check, self.config.max_gate_blocks),
@@ -637,6 +645,68 @@ class Pipeline:
             self._stage(stage.name).update(status="failed", last_check=report)
             self._save()
             raise StageFailed(f"design 방향이 자동 검사를 통과하지 못했다:\n{report}")
+
+    def _copy_library(self, library: Path, brands: list[str]) -> None:
+        copy_candidates(library, brands, self.run_dir)
+        write_index(self.run_dir, library_docs(library, brands))
+
+    async def _design_sources(self) -> dict[str, Any]:
+        """디자인 원천을 정한다. 레퍼런스 사이트에서 찾아 내려받고, 안 되면 로컬 라이브러리를 쓴다. 어느 쪽인지 기록한다."""
+        reason = "design-sources.toml을 쓰지 않는 실행"
+        if self.config.design_sources is not None and self.config.design_refs:
+            refs, reason = await self._collect_refs(self.config.design_sources)
+            if refs is not None:
+                return refs
+            print(f"  디자인 원천: 레퍼런스를 쓰지 못해 로컬 라이브러리로 간다 ({reason})", flush=True)
+        library = self.config.design_library
+        if library is None or not list_library(library):
+            raise StageFailed(f"디자인 라이브러리에 DESIGN.md가 없다: {library} (레퍼런스: {reason})")
+        # 무작위로 뽑지 않는다. 라이브러리 전체와 목록을 두고 에이전트가 분야에 어울리는 원천을 고른다
+        brands = list_library(library)
+        self._copy_library(library, brands)
+        return {"source": "library", "library": str(library), "candidates": brands, "fallback_reason": reason}
+
+    async def _collect_refs(self, sources_path: Path) -> tuple[dict[str, Any] | None, str]:
+        sources = load_sources(sources_path)
+        picks_path = self.run_dir / PICKS_NAME
+
+        def check() -> tuple[bool, str]:
+            return self._report(check_picks(picks_path, sources), "디자인 원천")
+
+        if not check()[0]:
+            print("\n== design: 레퍼런스 사이트에서 원천 찾기", flush=True)
+            await self._agent(
+                stage="design-refs", round_no=1,
+                system_prompt=prompts.REFS_SYSTEM,
+                prompt=prompts.refs_prompt(self.config.idea, sources, self._has_brief),
+                tools=list(REFS_TOOLS), writable=[picks_path], max_turns=self.config.research_max_turns,
+                gate=StopGate("디자인 원천", check, self.config.max_gate_blocks), web_domains=web_domains(sources),
+            )
+        ok, report = check()
+        if not ok:
+            return None, f"원천 검색 결과가 검사를 통과하지 못했다: {report}"
+        data = json.loads(picks_path.read_text(encoding="utf-8"))
+        out_dir = self.run_dir / CANDIDATES_DIRNAME
+        shutil.rmtree(out_dir, ignore_errors=True)
+        out_dir.mkdir(parents=True)
+        docs: dict[str, str] = {}
+        refs: dict[str, dict[str, str]] = {}
+        failed: list[str] = []
+        for pick in data["picks"]:
+            ref = resolve(pick["url"], sources, data["type"])
+            try:
+                text = fetch(ref.raw_url)
+            except (RefError, OSError) as e:
+                failed.append(f"{ref.url}: {e}")
+                continue
+            (out_dir / f"{ref.name}.md").write_text(text, encoding="utf-8")
+            docs[ref.name] = text
+            refs[ref.name] = {"url": ref.url, "raw_url": ref.raw_url, "repo": ref.source.repo,
+                              "license": ref.source.license, "attribution": ref.attribution, "why": pick["why"]}
+        if len(docs) < MIN_REFS:
+            return None, f"내려받은 원천이 {len(docs)}개뿐이다: {'; '.join(failed)}"
+        write_index(self.run_dir, docs, {n: r["attribution"] for n, r in refs.items()})
+        return {"source": "references", "type": data["type"], "candidates": list(docs), "refs": refs, "failed": failed}, ""
 
     def choose(self) -> None:
         """사람의 선택을 받는다. 고를 것이 남았는데 선택이 없으면 멈춘다.
@@ -716,6 +786,12 @@ class Pipeline:
             info.update(status="failed", last_check=report)
             self._save()
             raise StageFailed(f"DESIGN.md가 자동 검사를 통과하지 못했다:\n{report}")
+        refs = self.state["design"].get("refs", {})
+        used = [refs[src] for src in chosen["sources"] if src in refs]
+        if used:
+            # 레퍼런스의 라이선스(MIT, Apache-2.0)는 출처와 라이선스 표시를 요구한다. 생성 결과와 상관없이 코드가 붙인다
+            with (self.run_dir / "DESIGN.md").open("a", encoding="utf-8") as f:
+                f.write("\n\n## Sources\n\n" + "\n".join(f"- {r['attribution']}" for r in used) + "\n")
         info["status"] = "passed"
         self._save()
 
@@ -794,7 +870,8 @@ class Pipeline:
         readme = _readme(self.config.idea, spec, stages, self.spent, report["success"], error)
         if report["status"] == "awaiting_choice":
             readme = _choice_readme(self.config.idea, self.run_dir, self.config.out_dir, self.spent, error,
-                                    self._screening(), self.state.get("choice", {}), self._wants_design_directions())
+                                    self._screening(), self.state.get("choice", {}), self._wants_design_directions(),
+                                    self.state.get("design", {}))
         (self.run_dir / "README.md").write_text(readme, encoding="utf-8")
         return report_path
 
@@ -861,7 +938,7 @@ def _section(text: str, heading: str) -> str:
 
 def _choice_readme(
     idea: str, run_dir: Path, out_dir: Path, cost: float, error: str | None,
-    screening: Screening, choice: dict[str, Any], wants_design: bool,
+    screening: Screening, choice: dict[str, Any], wants_design: bool, design_state: dict[str, Any],
 ) -> str:
     lines = ["# 선택 대기", "", f"아이디어: {idea}", "", f"지금까지 비용 추정 ${cost:.2f}", ""]
     if error:
@@ -886,11 +963,13 @@ def _choice_readme(
         cmd.append('--choose-spec <id> --spec-reason "고른 이유"')
 
     if wants_design and "design" not in choice:
+        refs = design_state.get("refs", {})
         lines += ["## 디자인 방향 (concepts.json, 원천은 design-candidates/)", ""]
         for d in directions_of(run_dir / "concepts.json"):
             lines += [f"### {d['id']} ({d['kind']}) - {', '.join(d['sources'])}", "",
                       f"- 미리보기: {PREVIEWS_DIRNAME}/{d['id']}.html", f"- 은유: {d['metaphor']}",
-                      f"- 첫 화면: {d['first_screen']}", f"- 위험: {d['risks']}", ""]
+                      f"- 첫 화면: {d['first_screen']}", f"- 위험: {d['risks']}"]
+            lines += [f"- 출처: {refs[src]['attribution']}" for src in d["sources"] if src in refs] + [""]
         cmd.append('--choose-design <id> --design-reason "고른 이유"')
 
     lines += ["```bash", " \\\n  ".join(cmd), "```", ""]

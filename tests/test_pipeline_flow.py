@@ -2,6 +2,7 @@
 
 import json
 import sys
+from pathlib import Path
 
 import mvpgen.pipeline as pipeline_mod
 from mvpgen.agents import AgentRun
@@ -633,3 +634,68 @@ async def test_critic_only_points_at_existing_research(tmp_path, monkeypatch):
     assert await Pipeline(config, run_dir).run() is True
     critic_prompt = next(p for s, p in calls if s == "spec-screen-critic")
     assert "research/a.md" in critic_prompt and "research/b.md" not in critic_prompt
+
+
+SOURCES_TOML = Path(__file__).resolve().parent.parent / "design-sources.toml"
+VOLT = "https://github.com/VoltAgent/awesome-design-md/blob/main/design-md/{}/DESIGN.md"
+
+
+def with_refs(base, seen):
+    """design-refs 세션을 흉내 낸다. 받은 웹 범위를 seen에 남긴다."""
+    async def agent(**kw):
+        if kw["stage"] != "design-refs":
+            return await base(**kw)
+        seen["web_domains"] = kw.get("web_domains")
+        seen["tools"] = kw["tools"]
+        picks = [{"url": VOLT.format(n), "why": f"{n}가 어울린다"} for n in ("wired", "vogue", "nike")]
+        (kw["cwd"] / "design-refs.json").write_text(json.dumps({"type": "web", "picks": picks}))
+        assert kw["gate"].checker()[0]
+        return AgentRun("design-refs", True, "success", 0.1, 3, 0.01)
+    return agent
+
+
+async def test_design_sources_come_from_reference_sites(tmp_path, monkeypatch):
+    calls, seen = [], {}
+    monkeypatch.setattr(pipeline_mod, "run_agent", with_refs(make_fake_agent(calls), seen))
+    monkeypatch.setattr(pipeline_mod, "fetch", lambda url: f'---\ndescription: "{url.split("/")[-2]} style"\n---\n# x')
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    config = RunConfig(idea="할 일 목록", out_dir=tmp_path, budget_usd=5, design="auto",
+                       design_library=make_library(tmp_path / "lib"), design_sources=SOURCES_TOML)
+
+    assert await Pipeline(config, run_dir).run() is False
+    # 웹 도구는 레퍼런스 도메인으로 묶이고, 셸은 없다
+    assert seen["web_domains"] == ["github.com", "raw.githubusercontent.com"] and "Bash" not in seen["tools"]
+    state = json.loads((run_dir / "state.json").read_text())
+    design = state["design"]
+    assert design["source"] == "references" and design["type"] == "web"
+    assert design["candidates"] == ["voltagent-wired", "voltagent-vogue", "voltagent-nike"]
+    assert design["refs"]["voltagent-wired"]["license"] == "MIT"
+    index = (run_dir / "design-candidates" / "INDEX.md").read_text()
+    assert "- voltagent-wired: wired style (출처: https://github.com/VoltAgent" in index
+    # 멈춤 README에 방향마다 출처가 붙는다
+    assert "- 출처: https://github.com/VoltAgent/awesome-design-md/blob/main/design-md/" in (run_dir / "README.md").read_text()
+
+    config.choose_design = "B"
+    assert await Pipeline(config, run_dir).run() is True
+    design_md = (run_dir / "DESIGN.md").read_text()
+    b_source = next(d for d in json.loads((run_dir / "concepts.json").read_text())["directions"] if d["id"] == "B")["sources"][0]
+    assert "## Sources" in design_md and design["refs"][b_source]["url"] in design_md
+
+
+async def test_failed_reference_downloads_fall_back_to_library(tmp_path, monkeypatch):
+    calls, seen = [], {}
+    monkeypatch.setattr(pipeline_mod, "run_agent", with_refs(make_fake_agent(calls), seen))
+
+    def broken(url):
+        raise OSError("network down")
+
+    monkeypatch.setattr(pipeline_mod, "fetch", broken)
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    config = RunConfig(idea="할 일 목록", out_dir=tmp_path, budget_usd=5, design="auto",
+                       design_library=make_library(tmp_path / "lib"), design_sources=SOURCES_TOML)
+    assert await Pipeline(config, run_dir).run() is False
+    design = json.loads((run_dir / "state.json").read_text())["design"]
+    assert design["source"] == "library" and "0개" in design["fallback_reason"]
+    assert calls[-1][0] == "design-directions"
