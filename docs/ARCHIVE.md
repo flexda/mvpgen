@@ -634,6 +634,7 @@ A안의 결과로, 같은 프로젝트에서 두 번째 실행을 하면 첫 실
 | 2 | `exp/architecture`의 커밋 안 된 `lessons.md` | 같은 지적 두 줄 중 하나만 커밋 | 둘 다: 같은 내용의 중복 |
 | 3 | `new-api/` CSV, 세션 내보내기 txt, `loop-2-writing` 미추적 파일 | 커밋하지 않음 | 다음 실험의 입력이거나 다른 실험의 원고다 |
 | 4 | brief 실행 중 PRD 세션이 `~/.claude/projects/-Users-reflectdata-Project-loop-2-test/memory/`의 메모리(C 선호, 이전 앱 결과)를 읽음 | 실행을 1분 만에 멈추고, 모든 세션에 `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`을 넣음. Haiku 세션 둘로 확인: 기본은 메모리 첫 항목을 인용했고, 설정하면 NO | `setting_sources=[]` 유지만: 자동 메모리는 설정 원천과 별개다. 실행 폴더를 저장소 밖으로: 폴더 규칙이 바뀌고 Actions와 달라진다 |
+| 5 | Build critic이 화면 캡처 PNG 두 장을 `Read`로 열자 세션이 `JSON message exceeded maximum buffer size of 1048576 bytes`로 죽음(brief 실행, 비용 0으로 기록) | 세션 옵션 `max_buffer_size`를 16MB로 올림. 480KB PNG 두 장을 읽히는 Haiku 세션으로 재현: 기본은 같은 오류, 16MB는 성공 | critic에게 이미지를 읽지 말라고 막기: Build critic의 화면 확인(360px 넘침)이 이 이미지에 의존한다 |
 
 ## 2026-10-21: brief로 실제 실행 (오늘 뭐하지)
 

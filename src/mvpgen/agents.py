@@ -26,6 +26,8 @@ GATE_HOOK_TIMEOUT_S = 1800
 # 실행 폴더가 저장소 안(workspace/)에 있으면 세션이 저장소의 Claude Code 자동 메모리를 읽는다.
 # setting_sources=[]로는 꺼지지 않아서 환경변수로 끈다 (code.claude.com/docs/en/memory)
 SESSION_ENV = {"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}
+# critic이 화면 캡처(PNG)를 Read로 열면 base64로 한 메시지에 실려 SDK 기본 버퍼(1MB)를 넘는다
+SESSION_BUFFER_BYTES = 16 * 1024 * 1024
 
 
 @dataclass
@@ -106,6 +108,7 @@ async def run_agent(
         setting_sources=[],
         hooks=hooks,  # type: ignore[arg-type]
         env={**(env or {}), **SESSION_ENV},
+        max_buffer_size=SESSION_BUFFER_BYTES,
     )
 
     log_path.parent.mkdir(parents=True, exist_ok=True)

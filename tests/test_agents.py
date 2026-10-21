@@ -8,6 +8,7 @@ def test_session_disables_auto_memory_and_keeps_env(tmp_path, monkeypatch):
 
     async def fake_query(*, prompt, options):
         seen["env"] = options.env
+        seen["buffer"] = options.max_buffer_size
         return
         yield
 
@@ -17,3 +18,5 @@ def test_session_disables_auto_memory_and_keeps_env(tmp_path, monkeypatch):
         effort="high", max_turns=1, max_budget_usd=1.0, log_path=tmp_path / "log.txt", env={"MMCA_SERVICE_KEY": "k"},
     ))
     assert seen["env"] == {"MMCA_SERVICE_KEY": "k", "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}
+    # 화면 캡처를 읽는 critic 세션이 SDK 기본 버퍼(1MB)에 걸리지 않는다
+    assert seen["buffer"] >= 8 * 1024 * 1024
