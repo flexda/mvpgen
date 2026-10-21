@@ -9,7 +9,8 @@ from mvpgen.pipeline import (STAGE_MODEL_KEYS, find_run_dir, make_slug, model_fo
 
 def test_stage_model_keys_follow_stage_table():
     assert STAGE_MODEL_KEYS == ("prd", "spec", "design", "build", "plan", "research", "critic",
-                                "prd-critic", "spec-critic", "build-critic", "plan-critic")
+                                "prd-critic", "spec-critic", "build-critic", "plan-critic",
+                                "data-plan", "data-build", "data-plan-critic", "data-build-critic")
 
 
 def test_resolve_settings_reads_legacy_state_and_defaults():
@@ -38,6 +39,10 @@ def test_model_for_resolution():
     assert model_for("research-a", legacy, "d") == "s"
     # 거르기 critic은 spec-critic, 없으면 plan-critic 설정을 따른다
     assert model_for("spec-screen-critic", {"spec-critic": "sc", "critic": "c"}, "d") == "sc"
+    # mvpdata 단계는 앱 모드의 plan, build 키를 따르지 않는다
+    data = {"data-build": "db", "data-plan-critic": "dpc", "critic": "c", "plan": "p", "build": "b"}
+    assert [model_for(st, data, "d") for st in ("data-plan", "data-build", "data-build-fix1", "data-plan-critic",
+                                                "data-build-critic")] == ["d", "db", "db", "dpc", "c"]
     assert model_for("spec-screen-critic", legacy, "d") == "pc"
     assert model_for("research-b", {**legacy, "research": "r"}, "d") == "r"
 

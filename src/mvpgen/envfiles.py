@@ -2,6 +2,7 @@
 
 - claude.env: mvpgen 자신이 Claude를 호출할 때 쓰는 인증 정보(API 키, 구독 토큰 또는 페더레이션 변수). 프로세스 환경변수로 올린다.
 - mvp.env: 생성되는 MVP가 쓸 외부 API 키. 이름만 프롬프트에 알리고, 값은 Build 세션과 검증 실행의 환경변수로만 넘긴다.
+- supabase.env: 데이터 모드(mvpdata)의 DB 접속 문자열. 에이전트 세션에는 넘기지 않고 DB 검사(db push, 적재)에만 쓴다.
 """
 
 from __future__ import annotations
@@ -12,6 +13,8 @@ from pathlib import Path
 
 CLAUDE_FILE = "claude.env"
 MVP_FILE = "mvp.env"
+SUPABASE_FILE = "supabase.env"
+SUPABASE_URL_KEY = "SUPABASE_DB_URL"
 CLAUDE_CRED_KEYS = (
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_AUTH_TOKEN",
@@ -27,6 +30,7 @@ CLAUDE_CRED_KEYS = (
     "ANTHROPIC_CONFIG_DIR",
     "ACTIONS_ID_TOKEN_REQUEST_URL",
     "ACTIONS_ID_TOKEN_REQUEST_TOKEN",
+    SUPABASE_URL_KEY,
 )
 
 _LINE = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$")
@@ -65,6 +69,11 @@ def load_claude_env(secrets_dir: Path) -> list[str]:
 
 def load_mvp_env(secrets_dir: Path) -> dict[str, str]:
     return parse_env_file(secrets_dir / MVP_FILE)
+
+
+def load_supabase_url(secrets_dir: Path) -> str | None:
+    """셸에 export한 SUPABASE_DB_URL이 있으면 그 값을, 없으면 supabase.env의 값을 돌려준다."""
+    return os.environ.get(SUPABASE_URL_KEY) or parse_env_file(secrets_dir / SUPABASE_FILE).get(SUPABASE_URL_KEY)
 
 
 def app_env(extra: dict[str, str]) -> dict[str, str]:

@@ -40,6 +40,8 @@ class Stage:
     critic_port: bool = False
     # critic 루프를 도는가. design은 사람이 미리보기로 고르고 코드 검사만 하므로 critic이 없다
     reviewed: bool = True
+    # False면 점수가 떨어져도 이전 라운드 산출물로 되돌리지 않는다 (DB에 적용한 마이그레이션은 파일만 되돌릴 수 없다)
+    rollback: bool = True
 
 
 # 실행 순서대로 둔다. 이 순서가 --stage-model 키와 README 검증 기록의 순서가 된다
@@ -79,7 +81,7 @@ LEGACY_STAGE = {"prd": "plan", "spec": "plan"}
 
 # --stage-model에 쓸 수 있는 키. critic은 모든 critic에 적용되고, 개별 critic 키가 그보다 우선한다
 STAGE_MODEL_KEYS = (*STAGES, "plan", "research", "critic", *(f"{n}-critic" for n, s in STAGES.items() if s.reviewed),
-                    "plan-critic")
+                    "plan-critic", "data-plan", "data-build", "data-plan-critic", "data-build-critic")
 
 
 def model_for(stage: str, stage_models: dict[str, str], default: str) -> str:
@@ -90,6 +92,9 @@ def model_for(stage: str, stage_models: dict[str, str], default: str) -> str:
         legacy = LEGACY_STAGE.get(base)
         return (stage_models.get(stage) or stage_models.get(f"{base}-critic")
                 or (legacy and stage_models.get(f"{legacy}-critic")) or stage_models.get("critic") or default)
+    if stage.startswith("data-"):
+        # mvpdata 단계(data-plan, data-build-fix1 등). data-build-fixN은 data-build 설정을 따른다
+        return stage_models.get(re.sub(r"-fix\d+$", "", stage)) or default
     base = stage.split("-", 1)[0]
     if base == "research":
         # 조사 세션(research-a 등)은 따로 지정하지 않으면 spec 설정을 따른다
@@ -155,6 +160,8 @@ class RunConfig:
     spec_reason: str | None = None
     choose_design: str | None = None
     design_reason: str | None = None
+    # 에이전트가 파일, 명령에 직접 쓰면 막을 값 (mvp_env 밖의 비밀값, 예: DB 접속 문자열)
+    extra_secrets: list[str] = field(default_factory=list)
 
 
 # 실행 설정 중 --resume에서 플래그를 생략하면 처음 실행의 값을 이어 쓰는 것과 그 기본값
@@ -303,6 +310,17 @@ class Pipeline:
         gate = f", gate block {run.gate['blocks']}회" if run.gate else ""
         print(f"  <- {run.stage} {status} ({model}): ${run.cost_usd:.3f}, {run.turns}턴{gate}, 누적 ${self.spent:.2f}", flush=True)
 
+    def _agent_env(self) -> dict[str, str]:
+        """에이전트 세션에 넘길 환경변수. 앱 모드는 생성할 앱이 쓸 키(mvp_env)를 넘긴다."""
+        return self.config.mvp_env
+
+    def _is_accepted(self, review: Review) -> bool:
+        return is_accepted(review, self.config.pass_threshold)
+
+    def _round_rank(self, review: Review) -> tuple:
+        """합격 여부 다음의 라운드 비교 기준. 합격한 라운드는 점수가 낮아도 불합격 라운드로 되돌리지 않는다."""
+        return (review.score,)
+
     async def _agent(self, *, stage: str, round_no: int, **kwargs: Any) -> AgentRun:
         model = model_for(stage, self.config.stage_models, self.config.model)
         run = await run_agent(
@@ -312,8 +330,9 @@ class Pipeline:
             effort=self.config.effort,
             max_budget_usd=self._remaining(),
             log_path=self.run_dir / "logs" / f"{stage}-r{round_no}.log",
-            env=self.config.mvp_env,
+            env=self._agent_env(),
             protected=self.config.protected_paths,
+            extra_secrets=self.config.extra_secrets,
             **kwargs,
         )
         self._record_run(run, round_no, model)
@@ -360,7 +379,8 @@ class Pipeline:
         """initial_feedback을 주면 1라운드 생성부터 그 지적을 반영한다(이미 있는 산출물을 고치는 경우)."""
         stage = spec.name
         info = self._stage(stage)
-        tracker = RoundTracker(paths, self.run_dir, self.run_dir / "snapshots" / stage)
+        tracker = RoundTracker(paths, self.run_dir, self.run_dir / "snapshots" / stage, rollback=spec.rollback,
+                               rank=lambda r: (self._is_accepted(r), *self._round_rank(r)))
         feedback: str | None = initial_feedback
         last: Review | None = None
 
@@ -391,9 +411,7 @@ class Pipeline:
                 stage=f"{stage}-critic",
                 round_no=round_no,
                 system_prompt=prompts.CRITIC_SYSTEM,
-                prompt=prompts.critic_prompt(stage, self.config.idea, spec.rubric, review_rel, port,
-                                          has_context=bool(list_context(self.run_dir)),
-                                          has_design=(self.run_dir / "DESIGN.md").exists(), has_brief=self._has_brief),
+                prompt=self._critic_prompt(stage, spec.rubric, review_rel, port),
                 tools=list(spec.critic_tools),
                 writable=[review_path],
                 max_turns=self.config.critic_max_turns,
@@ -403,7 +421,7 @@ class Pipeline:
             if not ok_file:
                 raise StageFailed(f"{stage} critic이 유효한 review를 남기지 못했다: {msg}")
             review = load_review(review_path)
-            accepted = is_accepted(review, self.config.pass_threshold)
+            accepted = self._is_accepted(review)
             rolled_back = tracker.record(round_no, review)
             added = record_lessons(self.lessons_path, stage, review.issues)
             info["rounds"].append({
@@ -432,6 +450,11 @@ class Pipeline:
         best = tracker.best
         print(f"  {stage}: 개정 한도에 도달해 최고점 라운드({best.round if best else '-'})로 진행한다", flush=True)
         return best.review if best else last  # type: ignore[return-value]
+
+    def _critic_prompt(self, stage: str, rubric: str, review_rel: str, port: int | None) -> str:
+        return prompts.critic_prompt(stage, self.config.idea, rubric, review_rel, port,
+                                     has_context=bool(list_context(self.run_dir)),
+                                     has_design=(self.run_dir / "DESIGN.md").exists(), has_brief=self._has_brief)
 
     # ---- 단계 ----
     async def prd(self) -> None:

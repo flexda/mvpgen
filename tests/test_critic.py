@@ -131,3 +131,21 @@ def test_lessons_prompt_reads_several_stage_names(tmp_path):
     path.write_text("# h\n\n- [plan] 예전 지적 -> 고쳐라\n- [spec] 새 지적 -> 고쳐라\n- [build] 다른 단계 -> x\n")
     got = lessons_prompt(path, "spec", "plan")
     assert "예전 지적" in got and "새 지적" in got and "다른 단계" not in got
+
+
+def test_rank_prefers_round_without_blocking_issue(tmp_path):
+    from mvpgen.critic import Review, RoundTracker
+
+    prd = tmp_path / "PRD.md"
+    tracker = RoundTracker([prd], tmp_path, tmp_path / "snaps",
+                           rank=lambda r: (not any(i.severity == "major" for i in r.issues), r.score))
+    major = {"severity": "major", "location": "a", "problem": "p", "fix": "f"}
+    prd.write_text("r1 major")
+    assert tracker.record(1, Review.model_validate({"pass": True, "score": 90, "summary": "s", "issues": [major]})) is False
+    prd.write_text("r2 fixed")
+    # 점수는 낮아도 major를 고친 라운드는 되돌리지 않는다
+    assert tracker.record(2, Review.model_validate({"pass": False, "score": 78, "summary": "s"})) is False
+    assert prd.read_text() == "r2 fixed" and tracker.best.round == 2
+    prd.write_text("r3 major again")
+    assert tracker.record(3, Review.model_validate({"pass": True, "score": 95, "summary": "s", "issues": [major]})) is True
+    assert prd.read_text() == "r2 fixed"

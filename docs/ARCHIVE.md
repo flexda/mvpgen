@@ -39,6 +39,13 @@
 | 의외성 정의 (2026-10-19) | 이 앱의 분야에 어울리는 스타일 가운데 흔하지 않은 표현 | 디자인 실험 결론(같은 분야 안의 낯선 표현)을 원천 종류에 맞게 일반화 |
 | 디자인 원천 (2026-10-19) | 무작위 추출을 없애고, DESIGN.md 레퍼런스 사이트에서 웹 검색 범위를 제한해 찾는다. 실패하면 로컬 라이브러리 | 무작위 추출은 옛 의외성 정의(다른 분야 빌리기)를 위한 장치였다. 사용자 제안 |
 | Actions 디자인 기본값 (2026-10-19) | `off`, 고르는 방식은 critic 추천 | 사람의 선택을 기다리는 흐름은 Actions 한 번의 실행과 맞지 않는다. 사용자 선택 |
+| 데이터 파이프라인 모드 (2026-10-19) | API 자료를 받아 Supabase 적재 파이프라인을 만드는 독립 모드 `mvpdata`. 기존 Plan/Design/Build 흐름은 그대로 둔다 | 사용자 선택. 목적은 mvpgen이 외부 DB 적재까지 할 수 있는지 보는 것. 브랜치 `exp/supabase-pipeline` |
+| 적재 대상 (2026-10-19) | 클라우드 Supabase 실험 전용 새 프로젝트 | 사용자 선택. 프로젝트 생성과 접속 문자열 입력은 사용자가 한다 |
+| API 정보 입력 (2026-10-19) | 기존 `--context` 폴더 재사용, 키는 `mvp.env` | 사용자 선택. 비밀값 검사 로직을 그대로 쓴다 |
+| 마이그레이션 방식 (2026-10-19) | Supabase 정식 규칙: 적용한 파일은 잠그고 변경은 새 파일로 추가. 적용은 `supabase db push --db-url` | 사용자 선택(A안). 검사마다 스키마를 지우고 다시 만드는 B안은 정식 흐름과 달라 버림 |
+| 데이터 모드 API 호출 제한 (2026-10-19) | 에이전트 세션에 API 키를 주지 않고, Plan 뒤 오케스트레이터가 `source.sample`대로 샘플을 받아 `context/samples/`에 둔다. install, test에도 키를 주지 않는다 | 첫 실행에서 에이전트가 자기 셸로 전체 수집을 여러 번 해 페이지 제한이 새었다. 사용자 승인 |
+| 데이터 모드 major 불합격 (2026-10-19) | major 이슈가 남으면 critic 점수와 상관없이 불합격, 개정 한도 뒤에도 남으면 실행 실패. 앱 모드 판정은 그대로 | 첫 실행에서 다른 전시를 합치는 major가 83점으로 합격했다. 사용자 승인 |
+| MMCA 2차 실행 (2026-10-20) | 구독 한도로 두 번 끊긴 뒤 중단. 보강 동작 검증은 다음 새 API 실행에 맡긴다 | 사용자 결정. 원래 실험 질문은 1차로 답이 났다 |
 
 ## 구조
 
@@ -478,6 +485,152 @@ worktree `/Users/reflectdata/Project/loop-2-arch`(브랜치 `exp/architecture`)�
 - 레퍼런스 원천의 실제 동작 확인(미확인: GitHub 범위 웹 검색이 파일 단위 DESIGN.md를 찾아 주는지)
 - 웹 검색 요금과 SDK 비용 추정 반영 여부(미확인)
 - 조사 세션 비용이 큼(시험 실행에서 후보당 $0.4~0.5). `--stage-model research=` 조정 검토
+
+## 2026-10-19: 데이터 파이프라인 모드 (mvpdata)
+
+사용자가 "mvpgen에 API 정보를 넘기면 Supabase에 데이터 파이프라인을 만드는 에이전트"를 새 worktree에서 실험하기로 했다. worktree는 `/Users/reflectdata/Project/loop-2-supabase`, 브랜치는 `exp/supabase-pipeline`(main `2c12e34`에서 분기)이다.
+
+### 만든 것
+
+| 파일 | 내용 |
+| --- | --- |
+| `src/mvpgen/data_cli.py` | `mvpdata` 진입점. `mvpgen`에 두 번째 명령을 더하면 `mvpgen "아이디어"` 형식이 깨져 별도 script로 뒀다 |
+| `src/mvpgen/datapipe.py` | `Pipeline`을 물려받은 `DataPipeline`. 단계 data-plan, data-build, 최종 검증 |
+| `src/mvpgen/dataspec.py` | `pipeline.json` 스키마(원천, raw/core/mart 테이블, 품질 검사 SQL, 명령)와 Plan 검사 |
+| `src/mvpgen/dbverify.py` | LLM 없는 DB 검사: 마이그레이션 잠금, install/test, `supabase db push`, 테이블 확인, 적재 2회 행 수 비교, 품질 SQL. 근거는 `db/*.md` |
+| `src/mvpgen/data_prompts.py` | 데이터 모드 전용 프롬프트와 루브릭. 앱 모드 프롬프트의 "별도 DB 금지", "실행 중 API 호출 금지"와 충돌해 섞지 않았다 |
+| 기존 파일 | `RunConfig.extra_secrets`(가드에 DB 비밀값 추가), `_critic_prompt` 교체 지점, `RoundTracker(rollback=False)`, `model_for`가 `*-fixN`을 각 build로 매핑 |
+| `contexts/mmca-api/` | 첫 실험용 자료. MMCA API 문서만 둔다 |
+| `secrets/supabase.env.example` | `SUPABASE_DB_URL` 형식 |
+
+| 사전 점검 | `mvpdata`가 Claude를 부르기 전에 DB 접속과 상태를 본다. 새 실행은 마이그레이션 기록과 raw/core/mart가 없어야 하고, 이어하기는 기록이 `db/ledger.json`과 같아야 한다 |
+| 잠금 자기 검사 | push가 성공했는데 적용 기록에 없는 파일이 있으면 실패로 본다. 버전 형식 가정이 틀려 아무것도 잠기지 않는 일을 막는다 |
+| `scripts/smoke_mvpdata.py` | LLM 없이 실제 DB 경로를 확인하는 가짜 앱 검사. 빈 프로젝트에서만 돌고, 끝나면 자기가 만든 raw, core와 기록 한 줄을 지운다 |
+
+테스트 124개 통과(새 22개). 모두 가짜 DB와 가짜 `db push`로 돌았다. 실제 Supabase와 에이전트 실행은 아직 하지 않았다.
+
+A안의 결과로, 같은 프로젝트에서 두 번째 실행을 하면 첫 실행의 기록과 테이블이 남아 사전 점검에서 멈춘다. 실행 사이 정리 방법(실행마다 새 프로젝트 또는 사용자가 직접 돌리는 초기화 명령)은 사용자가 정한다.
+
+### 확인한 사실
+
+| 항목 | 내용 | 출처 |
+| --- | --- | --- |
+| 마이그레이션 관리 | 파일은 `supabase/migrations/<시각>_이름.sql`로 git에서 관리하고, DB는 `supabase_migrations.schema_migrations`에 적용 기록을 남긴다. `db push`는 적용하지 않은 파일만 실행한다 | Supabase 문서(Database migrations, CLI workflows) |
+| CLI 옵션 | 설치된 CLI 2.40.7의 `db push`에 `--db-url`(퍼센트 인코딩 필요), `--workdir`, `--dry-run`, `--yes`가 있다 | `supabase db push --help` |
+| 작업 폴더 | `config.toml` 없이 `supabase/migrations`만 있어도 `db push`가 DB 접속 단계까지 간다 | 가짜 주소로 `--dry-run` 실행 |
+| 오류 출력 | 접속 실패 메시지에 호스트와 사용자 이름이 나오고 비밀번호는 나오지 않는다. 그래도 mvpgen은 가린다 | 같은 실행 |
+| 로컬 도구 | Supabase CLI는 `~/.local/bin/supabase`에 있고, Docker는 설치되어 있지만 데몬이 꺼져 있다. psql은 없다 | `which`, `docker info` |
+| 프로젝트 생성 | CLI가 이미 로그인되어 있어 `supabase projects create mvpdata-test --org-id ... --region ap-northeast-2`로 만들었다(ref `yjucvkpimbnsuicsudtd`). 비밀번호는 생성해 `secrets/`에만 저장했다 | 명령 결과 |
+| pooler 주소 | `supabase link`가 `supabase/.temp/pooler-url`에 남기는 주소는 6543(Transaction 모드)이다. 같은 호스트의 5432(Session 모드)로 접속했다 | 명령 결과, psycopg 접속 |
+| Session pooler의 `db push` | 동작한다 | smoke 실행 |
+| 적용 기록 버전 형식 | `schema_migrations.version`이 파일 이름의 14자리 시각과 같다. smoke에서 잠금이 1개 생겼다 | smoke 실행 |
+| 적재와 가리기 | 적재 2회 행 수가 같았고, 품질 SQL이 읽기 전용으로 돌았고, 근거 파일에 비밀값이 없었다. 정리 뒤 기록과 스키마가 비어 사전 점검을 다시 통과했다 | smoke 실행 |
+
+미확인: MMCA API 일일 호출 한도. 에이전트 실행은 아직 하지 않았다.
+
+### 첫 실제 실행 (MMCA, 15:37-16:4x)
+
+명령: `uv run mvpdata "MMCA 전시 정보를 Supabase에 적재" --context contexts/mmca-api --final-pages 5`, 구독 로그인(pro), 결과 폴더 `workspace/data-20261019-153750-mmca-supabase`(git 제외).
+
+| 단계 | 결과 |
+| --- | --- |
+| data-plan | r1 76점, r2 87점 합격 |
+| data-build | r1 83점 합격, Stop gate 1회, DB 검사 2회(check-1, check-2) |
+| 최종 검증(5페이지) | 전 단계 통과. core.exhibition_record 500, core.exhibition 184, mart.exhibition_current 25, 2회차 행 수 동일, 품질 검사 11개 위반 0 |
+| 마이그레이션 | `20261019160000_mmca_init.sql` 1개 잠김. DB 적용 기록과 같다(직접 조회) |
+| 비용 추정 | $9.44 (상한 $10에 근접. 구독이라 청구 없음) |
+| 비밀값 | 결과 폴더에 DB 비밀번호 없음(grep) |
+
+관찰:
+
+| 항목 | 내용 |
+| --- | --- |
+| 페이지 제한 우회 | 페이지 제한은 검사기가 넘기는 적재에만 걸린다. 에이전트가 자기 Bash로 실제 API를 탐색하고, `uv run --with pgserver`로 `/tmp`에 임시 Postgres를 띄워 전체 수집(40페이지)을 여러 번 돌렸다. 호출 수는 세지 않았다. 일일 한도 오류는 없었다 |
+| critic 지적(major) | 제목 포함 관계 병합이 다른 전시를 합친다(`한국근현대미술 I`과 `II`). 83점으로 합격했지만 데이터 손실이다 |
+| critic 지적(minor) | 1969년 이전 전시 56건을 core에서 뺐다(Plan의 period_order 하한 때문). 전체 수집은 Supabase에서 검증되지 않았다 |
+| 정리 | 에이전트가 남긴 `/tmp/mmca_pg`(78MB)와 탐색 파일을 지웠다. 서버 프로세스는 이미 꺼져 있었다 |
+
+이 프로젝트에는 이제 기록과 데이터가 있어 같은 프로젝트로 새 실행을 하면 사전 점검에서 멈춘다.
+
+### 첫 실행 뒤 보강 (API 호출 제한, major 불합격)
+
+| 변경 | 내용 |
+| --- | --- |
+| `src/mvpgen/datasample.py` | `fetch_samples`: `source.sample`(url, params, headers, pages 1-3, 값의 `{key}`, `{page}`)대로 받는다. 키와 인코딩된 키를 본문과 요청 기록에서 가린다. 2MB 상한, 30초 timeout, certifi 인증서. 성공했을 때만 `README.md`를 써서 실패하면 다음 실행이 다시 받는다 |
+| `dataspec.py` | `SampleRequest`. `key_env`가 있으면 `{key}`가 있어야 하고, 없으면 없어야 한다 |
+| `pipeline.py` | `_agent_env()`, `_is_accepted()`를 바꿀 수 있는 지점으로 뺐다. 앱 모드 동작은 같다 |
+| `datapipe.py` | 에이전트 env 비움, `mvp_env` 값을 가드 비밀값에 추가, Plan과 Build 사이에 API 샘플 단계, major 불합격, `open_major`와 `api_calls`를 보고서에 |
+| `dbverify.py` | install, test 환경에서 API 키를 뺐다. 키는 적재 단계에만 들어간다 |
+| `data_prompts.py` | 심각도 규칙(major는 이 실행에서 고칠 수 있는 데이터 손실, 멱등, 마이그레이션, 실패 삼킴), 샘플 사용, 키 없음, 로컬 Postgres 금지 |
+
+이어서 고친 것: data-plan 되돌리기를 점수만이 아니라 (합격 여부, major 없음, 점수) 순으로 비교한다(`RoundTracker(rank=)`). 점수만 보면 major를 고친 라운드가 점수가 조금 낮을 때 major가 있는 판으로 돌아간다. 합격한 라운드를 더 높은 점수의 불합격 판으로 되돌리던 기존 동작도 함께 고쳐져 앱 모드에도 적용된다. data-plan에 major가 남으면 Build 전에 멈춘다. 셸에 export한 `mvp_env` 키도 시작할 때 환경에서 지운다. 로컬 Postgres로 마이그레이션을 미리 확인하는 것은 허용한다(키가 없어 실제 API는 못 부르고, 잠긴 뒤 고치는 마이그레이션을 줄인다).
+
+확인: 테스트 133개 통과(새 9개). 실제 MMCA로 샘플 1페이지를 받아 HTTP 200, XML 5096바이트, 파일과 요청 기록에 키 없음을 확인했다(호출 1회).
+
+남은 한계: 키가 필요 없는 API는 에이전트가 직접 부르는 것을 막지 못한다(네트워크 격리 없음). 심각도 기준이 엄해져 개정 라운드가 늘면 기본 예산 $10으로는 부족할 수 있다(첫 실행 $9.44).
+
+### 2차 실행 (MMCA 재실행, 중단)
+
+보강한 동작(키 없는 에이전트, API 샘플, major 불합격)을 실제 실행으로 확인하려고 새 프로젝트 `mvpdata-test2`(ref `exzrrhekiguwhnkyhsmi`, Seoul)를 CLI로 만들고 1차와 같은 목표로 돌렸다. `--budget 20`, 최종 5페이지, 구독 로그인(pro). 결과 폴더 `workspace/data-20261019-163341-mmca-supabase`.
+
+| 시도 | 진행 | 비용 추정 | 결과 |
+| --- | --- | --- | --- |
+| 10-19 16:33 | data-plan r1 생성, critic 시작 직후 | $2.00 | "You've hit your session limit · resets 7:20pm" |
+| 10-19 21:02 이어하기 | data-plan r1을 다시 생성, critic이 review를 쓴 뒤 | +$2.51 | "resets 12:20am" |
+
+사용자 결정으로 여기서 멈췄다. 보강한 동작은 실제 실행으로 확인하지 못했다(미확인). 다음 새 API 실행이 함께 확인한다.
+
+알게 된 것:
+
+| 항목 | 내용 |
+| --- | --- |
+| 구독 한도 | Pro 세션 한도 한 번에 비용 추정 $2.5-4.5 정도만 돌았다. 1차 전체($9.44)는 운이 좋았거나 한도가 남아 있던 상태였다. 같은 대화의 사용량도 같은 한도를 쓴다 |
+| 이어하기 낭비 | 이어하기는 끝나지 않은 라운드를 처음부터 다시 생성한다. critic review가 남아 있어도 data-plan을 다시 만들었다 |
+| 프로젝트 | `mvpdata-test2`는 비어 있다(적용 기록 없음). 다음 실행에 재사용한다. 1차 프로젝트 접속 정보는 `secrets/supabase-test1.env`, `secrets/.supabase-db-password-test1`로 옮겼다 |
+
+### 결정 과정 (2차 실행)
+
+| 순서 | 질문이나 제안 | 결정 | 버린 안과 이유 |
+| --- | --- | --- | --- |
+| 1 | 다음 실험 순서 제안(MMCA 재실행, 새 API, 요구 추가 실행) | MMCA 재실행부터 | 없음 |
+| 2 | 한도로 두 번 끊긴 뒤 이어가는 방법(한도마다 이어하기, Sonnet, API 키) | 사용자가 "비교 실험 꼭 해야 해?"라고 물음. 원래 질문(외부 DB 적재 가능 여부)은 1차로 답이 났다고 설명 | 없음 |
+| 3 | 2차 실행 | 중단. 보강 검증은 다음 새 API 실행에 맡긴다 | 한도마다 이어하기: 반나절-하루 걸리고 비교 가치가 작다. API 키: 실제 청구 |
+
+### 결정 과정
+
+| 순서 | 질문이나 제안 | 결정 | 버린 안과 이유 |
+| --- | --- | --- | --- |
+| 1 | 구성 방식 | 독립 모드 | 기존 흐름의 새 단계(Plan -> Data -> Design -> Build): 실행 비용과 변경 범위가 크다 |
+| 2 | Supabase 위치 | 클라우드 프로젝트 | 로컬(`supabase start`, Docker): 추천했으나 사용자가 클라우드를 골랐다 |
+| 3 | API 정보 입력 | `--context` 폴더 | CLI 인자(`--api-url` 등): 문서 없이 에이전트가 응답을 탐색해야 한다 |
+| 4 | 검사 때마다 스키마를 지우고 다시 만들기 | 사용자가 "정식으로 쓰면 SQL 파일이 없어지나"라고 물음. 없어지지 않고, 지우기는 개발 중 편법이었다고 설명 | 없음 |
+| 5 | 마이그레이션 방식 | A: 정식 규칙(잠금 + 새 파일 추가) | B: 매번 초기화. 최종 SQL만 보고, 변경을 누적하는 능력은 보지 못한다 |
+| 6 | 프로젝트 | 실험 전용 새 프로젝트 | 기존 프로젝트: A안이라 위험은 작지만 정리가 번거롭다 |
+
+### 사용자가 할 일
+
+1. 새 프로젝트와 `secrets/supabase.env`: 완료(사용자 확인 뒤 CLI로 만듦).
+2. smoke 확인: 완료, 전 단계 통과.
+3. 실행은 확인받은 뒤 worktree에서 `uv run mvpdata ... --secrets /Users/reflectdata/Project/loop-2-test/secrets`로 한다(worktree에는 실제 secrets가 없다).
+
+## 2026-10-21: 실험 브랜치 통합
+
+`exp/architecture`(12커밋)와 `exp/supabase-pipeline`(8커밋)을 main에 합쳤다. `exp/design`은 PR #7로 이미 들어가 있었다.
+
+| 결정 | 내용 | 이유 |
+| --- | --- | --- |
+| 병합 순서 | architecture 먼저, supabase-pipeline 다음 | architecture가 단계 구조를 바꿨다. mvpdata는 옛 구조 위의 작은 연결 지점이라 새 구조에 맞추기 쉽다 |
+| 단계 구조 | architecture의 단계 표(`Stage`)를 기준으로 한다. `Stage`에 `rollback`을 더하고, mvpdata는 `DATA_PLAN`, `DATA_BUILD`를 `Stage`로 정의한다 | 옛 `GEN_TOOLS_*`, `CRITIC_TOOLS_*` 상수와 `_review_loop(rubric=..., critic_tools=...)` 인자가 단계 표로 옮겨졌다 |
+| 단계별 모델 | `data-*` 세션은 `data-plan`, `data-build` 키를 따르고 앱 모드의 plan, build 키를 쓰지 않는다. critic은 개별 키, 없으면 `critic` | 단계 표의 이름 규칙(첫 토큰)으로는 `data-plan`이 `data`가 된다 |
+| guard | 웹 도메인 범위(architecture)와 추가 비밀값(supabase)을 함께 넘긴다 | 두 기능이 서로 독립이다 |
+
+### 결정 과정
+
+| 순서 | 질문이나 제안 | 결정 | 버린 안과 이유 |
+| --- | --- | --- | --- |
+| 1 | 통합 방법 | 사용자가 "알아서 병합"을 맡김. `integrate/main`에서 충돌을 풀고 테스트 통과 뒤 main을 앞당김 | main에서 바로 병합: 실패하면 main 작업 폴더가 반쯤 병합된 채 남는다 |
+| 2 | `exp/architecture`의 커밋 안 된 `lessons.md` | 같은 지적 두 줄 중 하나만 커밋 | 둘 다: 같은 내용의 중복 |
+| 3 | `new-api/` CSV, 세션 내보내기 txt, `loop-2-writing` 미추적 파일 | 커밋하지 않음 | 다음 실험의 입력이거나 다른 실험의 원고다 |
 
 ## 커밋
 
