@@ -623,6 +623,7 @@ A안의 결과로, 같은 프로젝트에서 두 번째 실행을 하면 첫 실
 | 단계 구조 | architecture의 단계 표(`Stage`)를 기준으로 한다. `Stage`에 `rollback`을 더하고, mvpdata는 `DATA_PLAN`, `DATA_BUILD`를 `Stage`로 정의한다 | 옛 `GEN_TOOLS_*`, `CRITIC_TOOLS_*` 상수와 `_review_loop(rubric=..., critic_tools=...)` 인자가 단계 표로 옮겨졌다 |
 | 단계별 모델 | `data-*` 세션은 `data-plan`, `data-build` 키를 따르고 앱 모드의 plan, build 키를 쓰지 않는다. critic은 개별 키, 없으면 `critic` | 단계 표의 이름 규칙(첫 토큰)으로는 `data-plan`이 `data`가 된다 |
 | guard | 웹 도메인 범위(architecture)와 추가 비밀값(supabase)을 함께 넘긴다 | 두 기능이 서로 독립이다 |
+| 자동 메모리 차단 | SDK 세션은 Claude Code 자동 메모리를 읽지 않는다 | 메모리는 git 저장소 단위라 `workspace/` 실행이 사용자의 이전 결정을 읽는다. 10-19 로컬 시험 실행(`loop-2-arch/workspace/`)도 같은 조건이었을 수 있다(미확인). 10-18 기준선은 Actions 실행(run 39119897521)이라 러너에 메모리가 없다 |
 
 ### 결정 과정
 
@@ -631,6 +632,7 @@ A안의 결과로, 같은 프로젝트에서 두 번째 실행을 하면 첫 실
 | 1 | 통합 방법 | 사용자가 "알아서 병합"을 맡김. `integrate/main`에서 충돌을 풀고 테스트 통과 뒤 main을 앞당김 | main에서 바로 병합: 실패하면 main 작업 폴더가 반쯤 병합된 채 남는다 |
 | 2 | `exp/architecture`의 커밋 안 된 `lessons.md` | 같은 지적 두 줄 중 하나만 커밋 | 둘 다: 같은 내용의 중복 |
 | 3 | `new-api/` CSV, 세션 내보내기 txt, `loop-2-writing` 미추적 파일 | 커밋하지 않음 | 다음 실험의 입력이거나 다른 실험의 원고다 |
+| 4 | brief 실행 중 PRD 세션이 `~/.claude/projects/-Users-reflectdata-Project-loop-2-test/memory/`의 메모리(C 선호, 이전 앱 결과)를 읽음 | 실행을 1분 만에 멈추고, 모든 세션에 `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`을 넣음. Haiku 세션 둘로 확인: 기본은 메모리 첫 항목을 인용했고, 설정하면 NO | `setting_sources=[]` 유지만: 자동 메모리는 설정 원천과 별개다. 실행 폴더를 저장소 밖으로: 폴더 규칙이 바뀌고 Actions와 달라진다 |
 
 ## 커밋
 
