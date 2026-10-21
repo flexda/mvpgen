@@ -412,6 +412,7 @@ name = "mvpgen"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "certifi" },
     { name = "claude-agent-sdk" },
     { name = "httpx" },
     { name = "pydantic" },
@@ -426,6 +427,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "certifi", specifier = ">=2026.7.22" },
     { name = "claude-agent-sdk", specifier = ">=0.2.165" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "pydantic", specifier = ">=2.14.1" },

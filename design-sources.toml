@@ -1,0 +1,40 @@
+# Design 단계가 DESIGN.md 원천을 찾는 레퍼런스 사이트 목록.
+# 원천 검색 세션은 앱 유형(web, app)에 맞는 항목의 검색 도메인으로만 WebSearch하고,
+# 파이프라인은 여기 적힌 저장소와 경로 아래의 DESIGN.md만 내려받는다.
+# 인증 없이 원본을 받을 수 있고 라이선스가 재사용을 허락하는 곳만 둔다(2026-10-19 확인).
+
+[[source]]
+name = "voltagent"
+type = "web"
+repo = "VoltAgent/awesome-design-md"
+ref = "main"
+path_prefix = "design-md/"
+license = "MIT"
+note = "유명 브랜드 사이트에서 추출한 DESIGN.md"
+
+[[source]]
+name = "open-design"
+type = "web"
+repo = "nexu-io/open-design"
+ref = "main"
+path_prefix = "design-systems/"
+license = "Apache-2.0"
+note = "브랜드와 스타일 디자인 시스템"
+
+[[source]]
+name = "design-skills"
+type = "web"
+repo = "bergside/awesome-design-skills"
+ref = "main"
+path_prefix = "skills/"
+license = "MIT"
+note = "스타일 단위 디자인 스킬(에디토리얼, 브루탈리즘 등)"
+
+[[source]]
+name = "ios-apps"
+type = "app"
+repo = "meliwat/awesome-ios-design-md"
+ref = "main"
+path_prefix = "design-md/"
+license = "MIT"
+note = "앱 200개의 DESIGN.md. 분야별 폴더(design-md/<분야>/<앱>/)"

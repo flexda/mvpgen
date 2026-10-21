@@ -42,14 +42,9 @@ on:
         default: ""
         type: string
       design:
-        description: "auto(무작위 후보에서 의외의 디자인 방향), off, 또는 저장소 안 DESIGN.md 경로"
+        description: "off(기본), 저장소 안 DESIGN.md 경로, 또는 auto. auto는 사람의 선택을 기다리며 멈춰 Actions에서는 이어 갈 수 없다"
         required: false
-        default: "auto"
-        type: string
-      design_seed:
-        description: "디자인 후보 추출 seed. 비우면 무작위"
-        required: false
-        default: ""
+        default: "off"
         type: string
 
 permissions:
@@ -99,13 +94,12 @@ jobs:
           EFFORT: ${{ inputs.effort }}
           CONTEXT: ${{ inputs.context }}
           DESIGN: ${{ inputs.design }}
-          DESIGN_SEED: ${{ inputs.design_seed }}
           WORKSPACE_ID: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
         run: |
           # 빈 값이 우선순위를 차지하지 않도록 값이 있을 때만 export한다
           if [ -n "$WORKSPACE_ID" ]; then export ANTHROPIC_WORKSPACE_ID="$WORKSPACE_ID"; fi
-          args=(--budget "$BUDGET" --effort "$EFFORT" --design "${DESIGN:-auto}")
-          if [ -n "$DESIGN_SEED" ]; then args+=(--design-seed "$DESIGN_SEED"); fi
+          # 사람이 고르는 지점에서 멈추지 않도록 고르는 방식은 critic 추천을 따른다
+          args=(--budget "$BUDGET" --effort "$EFFORT" --design "${DESIGN:-off}" --choose-spec recommended)
           if [ -n "$CONTEXT" ]; then args+=(--context "$CONTEXT"); fi
           uv run mvpgen "$IDEA" "${args[@]}"
 

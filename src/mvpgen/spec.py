@@ -1,4 +1,4 @@
-"""Plan 단계 산출물(spec.json, PRD.md)의 스키마와 객관적 검사."""
+"""PRD와 Spec 단계 산출물(PRD.md, spec-candidates/, spec.json)의 스키마와 객관적 검사."""
 
 from __future__ import annotations
 
@@ -48,7 +48,7 @@ class Spec(BaseModel):
     name: str = Field(..., min_length=1)
     summary: str = Field(..., min_length=1)
     stack: str = Field(..., min_length=1)
-    # 이 필드가 생기기 전의 spec도 읽을 수 있게 선택 항목으로 둔다. 새 Plan은 check_plan이 요구한다
+    # 이 필드가 생기기 전의 spec도 읽을 수 있게 선택 항목으로 둔다. 새 Spec 단계는 검사기가 요구한다
     intent: list[Intent] | None = None
     features: list[Feature] = Field(..., min_length=1, max_length=10)
     acceptance_criteria: list[Criterion] = Field(..., min_length=1)
@@ -79,32 +79,94 @@ def load_spec(path: Path) -> Spec:
     return Spec.model_validate_json(path.read_text(encoding="utf-8"))
 
 
-def check_plan(run_dir: Path) -> list[str]:
-    """Plan 산출물을 검사해 문제 목록을 돌려준다. 빈 목록이면 통과."""
-    problems: list[str] = []
-
-    spec_path = run_dir / "spec.json"
-    if not spec_path.exists():
-        problems.append("spec.json이 없다")
-    else:
-        try:
-            json.loads(spec_path.read_text(encoding="utf-8"))
-            if not load_spec(spec_path).intent:
-                problems.append("spec.json에 intent가 없다. 아이디어 원문의 요구를 빠짐없이 나눠 적고 각각 feature id를 연결하라")
-        except json.JSONDecodeError as e:
-            problems.append(f"spec.json이 올바른 JSON이 아니다: {e}")
-        except ValidationError as e:
-            problems.append(f"spec.json 스키마 오류:\n{e}")
-
+def check_prd(run_dir: Path) -> list[str]:
+    """PRD.md를 검사해 문제 목록을 돌려준다. 빈 목록이면 통과."""
     prd_path = run_dir / "PRD.md"
     if not prd_path.exists():
-        problems.append("PRD.md가 없다")
-    else:
-        prd = prd_path.read_text(encoding="utf-8")
-        missing = [h for h in PRD_HEADINGS if h not in prd]
-        if missing:
-            problems.append(f"PRD.md에 필수 제목이 없다: {missing}")
-        if len(prd) < PRD_MIN_CHARS:
-            problems.append(f"PRD.md가 너무 짧다 ({len(prd)}자, 최소 {PRD_MIN_CHARS}자)")
-
+        return ["PRD.md가 없다"]
+    prd = prd_path.read_text(encoding="utf-8")
+    problems: list[str] = []
+    missing = [h for h in PRD_HEADINGS if h not in prd]
+    if missing:
+        problems.append(f"PRD.md에 필수 제목이 없다: {missing}")
+    if len(prd) < PRD_MIN_CHARS:
+        problems.append(f"PRD.md가 너무 짧다 ({len(prd)}자, 최소 {PRD_MIN_CHARS}자)")
     return problems
+
+
+def _spec_problems(data: object, name: str) -> list[str]:
+    try:
+        spec = Spec.model_validate(data)
+    except ValidationError as e:
+        return [f"{name} 스키마 오류:\n{e}"]
+    if not spec.intent:
+        return [f"{name}에 intent가 없다. 요구 원문의 요구를 빠짐없이 나눠 적고 각각 feature id를 연결하라"]
+    return []
+
+
+def _read_json(path: Path) -> tuple[object, list[str]]:
+    if not path.exists():
+        return None, [f"{path.name}이 없다"]
+    try:
+        return json.loads(path.read_text(encoding="utf-8")), []
+    except json.JSONDecodeError as e:
+        return None, [f"{path.name}이 올바른 JSON이 아니다: {e}"]
+
+
+def check_spec(run_dir: Path) -> list[str]:
+    """고른 spec.json을 검사한다."""
+    data, problems = _read_json(run_dir / "spec.json")
+    return problems or _spec_problems(data, "spec.json")
+
+
+def candidate_ids(cand_dir: Path) -> list[str]:
+    return sorted(p.stem for p in cand_dir.glob("*.json"))
+
+
+def check_spec_candidates(cand_dir: Path, n: int) -> list[str]:
+    """spec-candidates/<id>.json 후보 n개를 검사한다. 후보는 {"decision", "approach", "spec"} 객체다.
+    기능은 PRD를 따르므로 모든 후보의 feature id가 같아야 하고, approach는 서로 달라야 한다."""
+    ids = candidate_ids(cand_dir)
+    if len(ids) != n:
+        return [f"{cand_dir.name}/에 후보 JSON이 {n}개 있어야 한다 (지금 {len(ids)}개: {ids})"]
+    problems: list[str] = []
+    feature_sets: dict[str, list[str]] = {}
+    smoke_kinds: dict[str, str] = {}
+    approaches: dict[str, str] = {}
+    for cid in ids:
+        name = f"{cand_dir.name}/{cid}.json"
+        data, errs = _read_json(cand_dir / f"{cid}.json")
+        if errs or not isinstance(data, dict):
+            problems += errs or [f"{name}은 객체여야 한다"]
+            continue
+        for key in ("decision", "approach"):
+            if not str(data.get(key, "")).strip():
+                problems.append(f"{name}에 {key}가 비어 있다")
+        approaches[cid] = str(data.get("approach", "")).strip()
+        errs = _spec_problems(data.get("spec"), f"{name}의 spec")
+        problems += errs
+        if not errs:
+            feature_sets[cid] = sorted(f["id"] for f in data["spec"]["features"])
+            smoke_kinds[cid] = "url" if data["spec"]["smoke"].get("url") else "command"
+    if len(set(map(tuple, feature_sets.values()))) > 1:
+        problems.append(f"후보마다 feature id가 다르다 {feature_sets}. 기능은 PRD.md를 따라 모든 후보가 같아야 한다")
+    if len(set(smoke_kinds.values())) > 1:
+        # 화면이 있는 앱인지(디자인 단계를 돌릴지)는 사람이 고르기 전에 정해야 한다
+        problems.append(f"후보마다 smoke 종류가 다르다 {smoke_kinds}. 모두 url(화면 있는 앱)이거나 모두 command여야 한다")
+    if len(set(approaches.values())) != len(approaches):
+        problems.append("후보의 approach가 서로 같다. decision 축에서 서로 다른 선택을 하라")
+    return problems
+
+
+def candidates_have_screen(cand_dir: Path) -> bool:
+    """검사를 통과한 후보들이 화면(smoke.url)이 있는 앱인가. 후보끼리 smoke 종류가 같으므로 하나만 본다."""
+    first = candidate_ids(cand_dir)[0]
+    return bool(candidate_spec(cand_dir, first)["smoke"].get("url"))
+
+
+def candidate(cand_dir: Path, cid: str) -> dict:
+    return json.loads((cand_dir / f"{cid}.json").read_text(encoding="utf-8"))
+
+
+def candidate_spec(cand_dir: Path, cid: str) -> dict:
+    return json.loads((cand_dir / f"{cid}.json").read_text(encoding="utf-8"))["spec"]

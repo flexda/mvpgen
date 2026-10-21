@@ -7,6 +7,7 @@ import re
 import shlex
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 DENY_PATTERNS: list[tuple[str, str]] = [
     (r"(^|[\s;&|(])sudo\b", "sudo는 쓸 수 없다"),
@@ -115,13 +116,28 @@ def _deny(input_data: dict[str, Any], reason: str) -> dict[str, Any]:
     }
 
 
+def check_web_scope(tool: str, tool_input: dict[str, Any], domains: list[str]) -> str | None:
+    """웹 도구를 domains 안으로 묶는다. WebSearch는 allowed_domains를 목록 안에서만 지정해야 하고, WebFetch는 목록의 호스트만 연다."""
+    if tool == "WebSearch":
+        allowed = tool_input.get("allowed_domains") or []
+        if not allowed or any(d not in domains for d in allowed):
+            return f"WebSearch는 allowed_domains를 다음 안에서만 지정해야 한다: {', '.join(domains)}"
+    elif tool == "WebFetch":
+        host = urlparse(str(tool_input.get("url", ""))).hostname or ""
+        if host not in domains:
+            return f"WebFetch는 다음 호스트만 열 수 있다: {', '.join(domains)}"
+    return None
+
+
 def make_guard(
     root: Path,
     writable: list[Path],
     protected: list[Path] | None = None,
     secret_values: list[str] | None = None,
+    web_domains: list[str] | None = None,
 ):
-    """root 밖 쓰기, writable 밖 쓰기, protected 폴더 접근, 비밀값 직접 기입을 막는 PreToolUse 콜백."""
+    """root 밖 쓰기, writable 밖 쓰기, protected 폴더 접근, 비밀값 직접 기입과 웹 도구로 비밀값 전송을 막는 PreToolUse 콜백.
+    web_domains를 주면 웹 도구를 그 도메인 안으로 묶는다(디자인 원천 검색)."""
     protected = protected or []
     secrets = [v for v in (secret_values or []) if len(v) >= 8]
 
@@ -145,6 +161,10 @@ def make_guard(
             reason = check_write(str(target), root, writable) or check_secret_values(
                 json.dumps(tool_input, ensure_ascii=False), secrets
             )
+        elif tool in {"WebFetch", "WebSearch"}:
+            # URL과 검색어는 밖으로 나간다. 비밀값이 섞여 나가지 않게 막는다
+            reason = check_secret_values(json.dumps(tool_input, ensure_ascii=False), secrets) or (
+                check_web_scope(tool, tool_input, web_domains) if web_domains is not None else None)
         elif tool in {"Read", "Grep", "Glob"}:
             reason = check_protected(
                 [str(tool_input.get(k, "")) for k in ("file_path", "path", "pattern")], root, protected

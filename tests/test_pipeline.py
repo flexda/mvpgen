@@ -3,7 +3,23 @@ from datetime import datetime
 
 import pytest
 
-from mvpgen.pipeline import find_run_dir, make_slug, model_for, name_slug, parse_stage_models
+from mvpgen.pipeline import (STAGE_MODEL_KEYS, find_run_dir, make_slug, model_for, name_slug, parse_stage_models,
+                             resolve_settings)
+
+
+def test_stage_model_keys_follow_stage_table():
+    assert STAGE_MODEL_KEYS == ("prd", "spec", "design", "build", "plan", "research", "critic",
+                                "prd-critic", "spec-critic", "build-critic", "plan-critic")
+
+
+def test_resolve_settings_reads_legacy_state_and_defaults():
+    legacy = {"model": "m0", "stage_models": {"plan": "p"}}
+    got = resolve_settings({"model": None, "stage_models": {}, "effort": None, "budget_usd": None, "design": None}, legacy)
+    assert got == {"model": "m0", "stage_models": {"plan": "p"}, "effort": "high", "budget_usd": 10.0, "design": "auto",
+                   "spec_candidates": 2, "research": True, "design_refs": True}
+    # --no-research(False)는 생략(None)과 달리 저장값을 덮는다
+    assert resolve_settings({"research": False}, {"settings": {"research": True}})["research"] is False
+    assert resolve_settings({"effort": "low"}, None)["effort"] == "low"
 
 
 def test_model_for_resolution():
@@ -14,6 +30,16 @@ def test_model_for_resolution():
     assert model_for("plan-critic", m, "d") == "c"
     assert model_for("design-critic", m, "d") == "dc"
     assert model_for("build-critic", {}, "d") == "d"
+    assert model_for("design-directions", {"design": "x"}, "d") == "x"
+    # 예전 plan 키는 prd와 spec에 쓰이고, 새 키가 있으면 그것이 우선한다
+    legacy = {"plan": "p", "plan-critic": "pc", "critic": "c", "spec": "s"}
+    assert [model_for(st, legacy, "d") for st in ("prd", "spec", "prd-critic", "spec-critic", "build-critic")] == [
+        "p", "s", "pc", "pc", "c"]
+    assert model_for("research-a", legacy, "d") == "s"
+    # 거르기 critic은 spec-critic, 없으면 plan-critic 설정을 따른다
+    assert model_for("spec-screen-critic", {"spec-critic": "sc", "critic": "c"}, "d") == "sc"
+    assert model_for("spec-screen-critic", legacy, "d") == "pc"
+    assert model_for("research-b", {**legacy, "research": "r"}, "d") == "r"
 
 
 def test_parse_stage_models():

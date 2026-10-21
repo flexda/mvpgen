@@ -56,6 +56,61 @@ def check_review_file(path: Path) -> tuple[bool, str]:
     return True, "review 파일 확인"
 
 
+class Verdict(BaseModel):
+    """Spec 후보 하나에 대한 거르기 판정."""
+
+    id: str = Field(..., min_length=1)
+    viable: bool
+    score: int = Field(..., ge=0, le=100)
+    summary: str = Field(..., min_length=1)
+    issues: list[Issue] = Field(default_factory=list)
+
+    def clean(self, threshold: int) -> bool:
+        """더 고칠 것 없이 spec.json으로 쓸 수 있는가."""
+        return self.viable and self.score >= threshold and not any(i.severity == "critical" for i in self.issues)
+
+    def feedback(self) -> str:
+        return Review(passed=self.viable, score=self.score, summary=self.summary, issues=self.issues).feedback()
+
+
+class Screening(BaseModel):
+    """spec critic이 후보를 고르지 않고 거르기만 한 결과. 사람이 viable 후보 중에서 고른다."""
+
+    summary: str = Field(..., min_length=1)
+    candidates: list[Verdict] = Field(..., min_length=1)
+    recommended: str = Field(..., min_length=1)
+
+    def verdict(self, cid: str) -> Verdict:
+        return next(v for v in self.candidates if v.id == cid)
+
+    @property
+    def viable_ids(self) -> list[str]:
+        return [v.id for v in self.candidates if v.viable]
+
+    def feedback(self) -> str:
+        return "\n\n".join(f"후보 {v.id}:\n{v.feedback()}" for v in self.candidates)
+
+
+def load_screening(path: Path) -> Screening:
+    return Screening.model_validate_json(path.read_text(encoding="utf-8"))
+
+
+def check_screening_file(path: Path, ids: list[str]) -> tuple[bool, str]:
+    """후보 id마다 판정이 정확히 하나 있고, recommended가 viable 후보인지 본다. viable이 없어도 형식은 통과다."""
+    if not path.exists():
+        return False, f"{path.name}이 아직 없다. 지정된 형식으로 작성하라."
+    try:
+        screening = load_screening(path)
+    except ValidationError as e:
+        return False, f"{path.name} 스키마 오류:\n{e}"
+    got = [v.id for v in screening.candidates]
+    if sorted(got) != sorted(ids):
+        return False, f"{path.name}의 candidates는 후보마다 하나씩 있어야 한다 (후보 {', '.join(ids)}, 지금 {', '.join(got)})"
+    if screening.viable_ids and screening.recommended not in screening.viable_ids:
+        return False, f"{path.name}의 recommended는 viable 후보 중 하나여야 한다 (viable: {', '.join(screening.viable_ids)})"
+    return True, "screening 파일 확인"
+
+
 def is_accepted(review: Review, threshold: int) -> bool:
     """critic이 pass라고 해도 점수 미달이거나 critical issue가 있으면 불합격."""
     return review.passed and review.score >= threshold and review.critical_count == 0

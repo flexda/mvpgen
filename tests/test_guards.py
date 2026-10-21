@@ -54,3 +54,34 @@ def test_guard_hook_output_shape(tmp_path):
     allowed = asyncio.run(guard({"hook_event_name": "PreToolUse", "tool_name": "Read",
                                  "tool_input": {"file_path": "/etc/hosts"}}, None, None))
     assert allowed == {}
+
+
+async def test_web_tools_cannot_send_secret_values(tmp_path):
+    guard = make_guard(tmp_path, [tmp_path], secret_values=["sk-live-abcdef123456"])
+
+    async def decide(tool, tool_input):
+        out = await guard({"hook_event_name": "PreToolUse", "tool_name": tool, "tool_input": tool_input}, None, None)
+        return out.get("hookSpecificOutput", {}).get("permissionDecision")
+
+    assert await decide("WebFetch", {"url": "https://api.example.com/v1?key=sk-live-abcdef123456", "prompt": "x"}) == "deny"
+    assert await decide("WebSearch", {"query": "sk-live-abcdef123456 usage"}) == "deny"
+    assert await decide("WebFetch", {"url": "https://docs.example.com/api", "prompt": "엔드포인트"}) is None
+
+
+async def test_web_tools_can_be_scoped_to_reference_domains(tmp_path):
+    guard = make_guard(tmp_path, [tmp_path], web_domains=["github.com", "raw.githubusercontent.com"])
+
+    async def decide(tool, tool_input):
+        out = await guard({"hook_event_name": "PreToolUse", "tool_name": tool, "tool_input": tool_input}, None, None)
+        return out.get("hookSpecificOutput", {}).get("permissionDecision")
+
+    assert await decide("WebSearch", {"query": "museum DESIGN.md"}) == "deny"
+    assert await decide("WebSearch", {"query": "x", "allowed_domains": ["github.com", "example.com"]}) == "deny"
+    assert await decide("WebSearch", {"query": "x", "allowed_domains": ["github.com"]}) is None
+    assert await decide("WebFetch", {"url": "https://example.com/DESIGN.md", "prompt": "x"}) == "deny"
+    assert await decide("WebFetch", {"url": "https://github.com/VoltAgent/awesome-design-md/tree/main", "prompt": "x"}) is None
+    # 범위를 주지 않은 세션(조사)은 웹 도구가 자유롭다
+    free = make_guard(tmp_path, [tmp_path])
+    out = await free({"hook_event_name": "PreToolUse", "tool_name": "WebFetch",
+                      "tool_input": {"url": "https://example.com", "prompt": "x"}}, None, None)
+    assert out == {}
